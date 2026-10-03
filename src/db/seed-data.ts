@@ -1,7 +1,56 @@
-// Commercial configuration seed. Every value is transcribed from the Phase 0 document,
-// which itself takes them from the Capabilities & Strategic Growth Guide. Anything the
-// documents do not state is null (NOT_CONFIGURED / UNKNOWN), never a guess.
+// Commercial configuration seed. Values marked "documented" are transcribed from the
+// Phase 0 document (which takes them from the Capabilities & Strategic Growth Guide) or
+// from Covenant's Phase 3 authorization. Values marked "default" are operator-adjustable
+// defaults agreed in the Phase 3 authorization, not facts about Covenant. Anything neither
+// source states stays null (NOT_CONFIGURED / UNKNOWN).
 import type { SettingKey } from "./validation";
+
+type Origin = "documented" | "default";
+
+// Service groups, supplied with the Phase 3 authorization (Capabilities Guide groupings).
+export const serviceCategories: { key: string; name: string; services: string[] }[] = [
+  {
+    key: "web_design_engineering",
+    name: "Web Design & Engineering",
+    services: [
+      "campaign_conversion_page",
+      "custom_business_website",
+      "full_revenue_business_site",
+      "sports_platform_build",
+      "web_technical_delegation",
+    ],
+  },
+  {
+    key: "branding_creative_direction",
+    name: "Branding & Creative Direction",
+    services: ["bespoke_logo_mark", "full_brand_identity_system", "collateral_print_asset_add_on"],
+  },
+  {
+    key: "content_media_production",
+    name: "Content & Media Production",
+    services: ["high_reach_reels_short_video", "core_content_pack", "growth_content_system", "matchday_sla_retainer"],
+  },
+  {
+    key: "b2b_revenue_pipeline_strategy",
+    name: "B2B Revenue & Pipeline Strategy",
+    services: ["onsite_revenue_leak_audit", "key_account_outreach_architecture", "enterprise_growth_retainer"],
+  },
+  { key: "combined", name: "Combined", services: ["complete_business_launchpad"] },
+];
+
+// Phase 0 "judgements" reason codes. The handover brief is said to list 13; the copy
+// read for Phase 3 lists none, so only these nine are seeded until the other four are supplied.
+export const judgementReasons: { key: string; label: string; sortOrder: number }[] = [
+  { key: "strong_commercial_opportunity", label: "Strong commercial opportunity", sortOrder: 1 },
+  { key: "good_service_fit", label: "Good service fit", sortOrder: 2 },
+  { key: "poor_digital_presence", label: "Poor digital presence", sortOrder: 3 },
+  { key: "too_small", label: "Too small", sortOrder: 4 },
+  { key: "no_obvious_budget", label: "No obvious budget", sortOrder: 5 },
+  { key: "wrong_industry", label: "Wrong industry", sortOrder: 6 },
+  { key: "already_well_served", label: "Already well served", sortOrder: 7 },
+  { key: "no_urgency", label: "No urgency", sortOrder: 8 },
+  { key: "other", label: "Other", sortOrder: 99 },
+];
 
 type Unit = "project" | "add_on" | "per_piece" | "retainer" | "bundle";
 
@@ -88,18 +137,29 @@ interface SignalTypeSeed {
   axis: "intent" | "opportunity" | null;
   intentRequiresIndependentSignal?: boolean;
   humanOnly?: boolean;
+  decayDays: number;
   group?: string;
   detectableFrom?: string;
 }
 
 // Phase 0, "Commercial triggers as signal types" and "Signals extracted from the reasoning".
-// Friction signals have no documented axis or decay yet: left null for Phase 8.
+// Axis (for friction signals) and decay days are operator-adjustable defaults from the
+// Phase 3 authorization. Friction signals decay with the audit that produced them: 90 days.
+const INTENT_FRICTION = new Set(["sponsorship_inventory", "audience_scale", "high_value_products"]);
 const friction = (group: string, keys: [string, string][]): SignalTypeSeed[] =>
-  keys.map(([key, name]) => ({ key, name, kind: "friction", axis: null, group }));
+  keys.map(([key, name]) => ({
+    key,
+    name,
+    kind: "friction",
+    axis: INTENT_FRICTION.has(key) ? "intent" : "opportunity",
+    decayDays: 90,
+    group,
+  }));
 
 export const signalTypes: SignalTypeSeed[] = [
   {
     key: "matchday_scramble",
+    decayDays: 60,
     name: "Matchday scramble",
     kind: "documented_trigger",
     axis: "intent",
@@ -107,6 +167,7 @@ export const signalTypes: SignalTypeSeed[] = [
   },
   {
     key: "web_underperformance",
+    decayDays: 90,
     name: "Outdated or underperforming web assets",
     kind: "documented_trigger",
     axis: "opportunity",
@@ -115,6 +176,7 @@ export const signalTypes: SignalTypeSeed[] = [
   },
   {
     key: "procurement_scorecard",
+    decayDays: 180,
     name: "Preferential procurement allocation",
     kind: "documented_trigger",
     axis: "intent",
@@ -123,6 +185,7 @@ export const signalTypes: SignalTypeSeed[] = [
   },
   {
     key: "brand_upgrade_need",
+    decayDays: 120,
     name: "Upgrading brand presence",
     kind: "documented_trigger",
     axis: "intent",
@@ -130,6 +193,7 @@ export const signalTypes: SignalTypeSeed[] = [
   },
   {
     key: "agency_fatigue",
+    decayDays: 90,
     name: "Agency fatigue / budget creep",
     kind: "documented_trigger",
     axis: "intent",
@@ -189,13 +253,19 @@ export const icpSegments: { key: string; name: string; definition: string; servi
   },
 ];
 
-// Phase 0, "Disqualifiers". Evidence requirements per rule are not documented: null.
-export const disqualifiers: { key: string; name: string; detectableFromWebsite: boolean }[] = [
-  { key: "zero_revenue_speculative", name: "Zero-revenue / speculative", detectableFromWebsite: true },
-  { key: "uncapitalised_micro_operator", name: "Uncapitalised micro-operator", detectableFromWebsite: false },
-  { key: "bureaucratic_procurement", name: "Bureaucratic procurement", detectableFromWebsite: true },
-  { key: "no_decision_maker_access", name: "No decision-maker access", detectableFromWebsite: true },
-  { key: "ethical_misalignment", name: "Ethical misalignment", detectableFromWebsite: false },
+// Phase 0, "Disqualifiers"; evidence rules are defaults from the Phase 3 authorization.
+const HUMAN_ONLY = "Human-supplied evidence only. Never fires automatically.";
+export const disqualifiers: { key: string; name: string; humanOnly: boolean; evidenceRequirement: string }[] = [
+  { key: "zero_revenue_speculative", name: "Zero-revenue / speculative", humanOnly: true, evidenceRequirement: HUMAN_ONLY },
+  { key: "uncapitalised_micro_operator", name: "Uncapitalised micro-operator", humanOnly: true, evidenceRequirement: HUMAN_ONLY },
+  {
+    key: "bureaucratic_procurement",
+    name: "Bureaucratic procurement",
+    humanOnly: false,
+    evidenceRequirement: "May fire on a published tender or supply-chain portal for the organisation.",
+  },
+  { key: "no_decision_maker_access", name: "No decision-maker access", humanOnly: true, evidenceRequirement: HUMAN_ONLY },
+  { key: "ethical_misalignment", name: "Ethical misalignment", humanOnly: true, evidenceRequirement: HUMAN_ONLY },
 ];
 
 // Phase 0, "Score" table default weights.
@@ -219,25 +289,29 @@ export const sources: { key: string; name: string; kind: "website_fetch" | "csv_
   { key: "human_operator", name: "Human operator statement", kind: "human_operator" },
 ];
 
-export const settings: { key: SettingKey; value: unknown; description: string }[] = [
-  { key: "delivery_slots_total", value: null, description: "New projects Covenant can start per cycle. NOT_CONFIGURED until supplied." },
-  { key: "qualify_score_threshold", value: null, description: "Minimum score for qualification. Set from real output." },
-  { key: "qualify_confidence_threshold", value: null, description: "Minimum confidence for qualification. Set independently of score." },
-  { key: "commercial_potential_floor_zar", value: null, description: "Commercial-potential floor that can pass the intent gate." },
-  { key: "conversation_worthiness_bar", value: null, description: "Deliberately unset: set after the first five audits are judged." },
-  { key: "ai_monthly_cap_usd", value: null, description: "Monthly AI spend cap; hard stop when reached." },
-  { key: "ai_per_lead_cap_usd", value: null, description: "Per-lead AI cost ceiling." },
+export const settings: { key: SettingKey; value: unknown; origin: Origin; description: string }[] = [
+  { key: "delivery_slots_total", value: null, origin: "documented", description: "New projects Covenant can start per cycle. NOT_CONFIGURED until supplied." },
+  { key: "qualify_score_threshold", value: 55, origin: "default", description: "Minimum score for qualification." },
+  { key: "qualify_confidence_threshold", value: 0.6, origin: "default", description: "Minimum confidence for qualification, set independently of score." },
+  { key: "commercial_potential_floor_zar", value: 3500, origin: "default", description: "Commercial-potential floor (rand) that can pass the intent gate." },
+  { key: "conversation_worthiness_bar", value: null, origin: "documented", description: "Deliberately unset: set after the first five audits are judged." },
+  { key: "ai_monthly_cap_zar", value: 500, origin: "default", description: "Monthly AI spend cap in rand; hard stop when reached." },
+  { key: "ai_per_lead_cap_usd", value: null, origin: "documented", description: "Per-lead AI cost ceiling. NOT_CONFIGURED." },
+  { key: "usd_zar_planning_rate", value: 17, origin: "documented", description: "Conservative planning rate (Phase 0 'External services') for converting USD AI costs to rand." },
+  { key: "dedupe_name_similarity_threshold", value: 0.6, origin: "default", description: "Name similarity at or above which import proposes a possible duplicate. Never merges." },
   {
     key: "freshness_refresh_days",
     value: { website_audit: 90, contact_channel: 180, company_profile: 180 },
+    origin: "documented",
     description: "Refresh targets from Phase 0 'Freshness and decay'.",
   },
   {
     key: "confidence_verifiability",
     value: { VERIFIED: 1.0, INFERRED: 0.6, REPORTED: 0.8, UNKNOWN: 0 },
+    origin: "documented",
     description: "Verifiability factor per claim type (Phase 0 'Confidence').",
   },
-  { key: "confidence_recency_floor", value: 0.4, description: "Recency factor at twice the refresh window (Phase 0 'Confidence')." },
+  { key: "confidence_recency_floor", value: 0.4, origin: "documented", description: "Recency factor at twice the refresh window (Phase 0 'Confidence')." },
 ];
 
 // Phase 0, "Benchmark dataset v1". Evaluation labels only; never read by the pipeline.

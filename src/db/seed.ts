@@ -1,6 +1,8 @@
-// Idempotent configuration seed: inserts missing rows, never overwrites operator edits.
+// Idempotent configuration seed. Inserts missing rows and fills values that are still
+// null; never overwrites a value, and never touches a row an operator has edited
+// (config_origin = 'operator').
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import * as s from "./schema/index";
 import * as data from "./seed-data";
 import { parseSetting } from "./validation";
@@ -24,6 +26,24 @@ export async function seed(db: Db): Promise<void> {
         })),
       )
       .onConflictDoNothing({ target: s.covenantServices.key });
+
+    await tx
+      .insert(s.serviceCategories)
+      .values(data.serviceCategories.map((c, i) => ({ key: c.key, name: c.name, sortOrder: i + 1 })))
+      .onConflictDoNothing({ target: s.serviceCategories.key });
+    for (const cat of data.serviceCategories) {
+      const [row] = await tx.select({ id: s.serviceCategories.id }).from(s.serviceCategories).where(eq(s.serviceCategories.key, cat.key));
+      if (!row) throw new Error(`seed: missing service category ${cat.key}`);
+      await tx
+        .update(s.covenantServices)
+        .set({ serviceCategoryId: row.id })
+        .where(and(inArray(s.covenantServices.key, cat.services), isNull(s.covenantServices.serviceCategoryId)));
+    }
+
+    await tx
+      .insert(s.judgementReasons)
+      .values(data.judgementReasons)
+      .onConflictDoNothing({ target: s.judgementReasons.key });
 
     await tx
       .insert(s.opportunityTypes)
@@ -67,9 +87,17 @@ export async function seed(db: Db): Promise<void> {
           humanOnly: st.humanOnly ?? false,
           group: st.group,
           detectableFrom: st.detectableFrom,
+          decayDays: st.decayDays,
+          configOrigin: "default" as const,
         })),
       )
       .onConflictDoNothing({ target: s.signalTypes.key });
+    for (const st of data.signalTypes) {
+      await tx
+        .update(s.signalTypes)
+        .set({ decayDays: st.decayDays, axis: sql`coalesce(${s.signalTypes.axis}, ${st.axis}::score_axis)`, configOrigin: "default" })
+        .where(and(eq(s.signalTypes.key, st.key), isNull(s.signalTypes.decayDays), ne(s.signalTypes.configOrigin, "operator")));
+    }
 
     await tx
       .insert(s.icpSegments)
@@ -85,7 +113,18 @@ export async function seed(db: Db): Promise<void> {
     );
     if (segLinks.length) await tx.insert(s.icpSegmentServices).values(segLinks).onConflictDoNothing();
 
-    await tx.insert(s.disqualifiers).values(data.disqualifiers).onConflictDoNothing({ target: s.disqualifiers.key });
+    await tx
+      .insert(s.disqualifiers)
+      .values(data.disqualifiers.map((d) => ({ ...d, configOrigin: "default" as const })))
+      .onConflictDoNothing({ target: s.disqualifiers.key });
+    for (const d of data.disqualifiers) {
+      await tx
+        .update(s.disqualifiers)
+        .set({ evidenceRequirement: d.evidenceRequirement, humanOnly: d.humanOnly, configOrigin: "default" })
+        .where(
+          and(eq(s.disqualifiers.key, d.key), isNull(s.disqualifiers.evidenceRequirement), ne(s.disqualifiers.configOrigin, "operator")),
+        );
+    }
 
     const ws = data.defaultWeightSet;
     const [existingActive] = await tx.select({ id: s.weightSets.id }).from(s.weightSets).limit(1);
@@ -103,10 +142,24 @@ export async function seed(db: Db): Promise<void> {
           key: st.key,
           value: parseSetting(st.key, st.value),
           description: st.description,
+          configOrigin: st.origin,
           updatedBy: "seed",
         })),
       )
       .onConflictDoNothing({ target: s.settings.key });
+    for (const st of data.settings) {
+      if (st.value === null) continue;
+      await tx
+        .update(s.settings)
+        .set({ value: parseSetting(st.key, st.value), configOrigin: st.origin, updatedBy: "seed" })
+        .where(
+          and(
+            eq(s.settings.key, st.key),
+            or(isNull(s.settings.value), sql`${s.settings.value} = 'null'::jsonb`),
+            ne(s.settings.configOrigin, "operator"),
+          ),
+        );
+    }
 
     await tx
       .insert(s.benchmarkCategories)

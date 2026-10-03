@@ -15,6 +15,13 @@
       "when": 1790891092821,
       "tag": "0001_m0_integrity_triggers",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791052095861,
+      "tag": "0002_phase3_corrections_and_ingest",
+      "breakpoints": true
     }
   ]
 }

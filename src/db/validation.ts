@@ -23,8 +23,10 @@ export const settingSchemas = {
   qualify_confidence_threshold: unit.nullable(),
   commercial_potential_floor_zar: nonNegative.nullable(),
   conversation_worthiness_bar: unit.nullable(),
-  ai_monthly_cap_usd: nonNegative.nullable(),
+  ai_monthly_cap_zar: nonNegative.nullable(),
   ai_per_lead_cap_usd: nonNegative.nullable(),
+  usd_zar_planning_rate: z.number().positive(),
+  dedupe_name_similarity_threshold: unit,
   freshness_refresh_days: z
     .object({ website_audit: z.number().int().positive(), contact_channel: z.number().int().positive(), company_profile: z.number().int().positive() })
     .strict(),

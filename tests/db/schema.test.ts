@@ -76,12 +76,14 @@ describe.skipIf(!adminUrl)("M0 schema against real PostgreSQL", () => {
       const tables = await q<{ table_name: string }>(
         `select table_name from information_schema.tables where table_schema = 'public' and table_type = 'BASE TABLE'`,
       );
-      expect(tables).toHaveLength(46);
+      expect(tables).toHaveLength(48);
       const names = tables.map((t) => t.table_name);
       for (const t of ["companies", "evidence", "source_records", "audits", "audit_findings", "signals", "opportunities", "scores", "judgements", "weight_sets", "benchmark_cases"]) {
         expect(names).toContain(t);
       }
       expect(names).not.toContain("outreach_messages");
+      expect(names).not.toContain("evidence_derivations");
+      expect(names).toContain("csv_import_rows");
       await one(`select 1 from information_schema.views where table_name = 'evidence_provenance'`);
     });
   });
@@ -146,9 +148,53 @@ describe.skipIf(!adminUrl)("M0 schema against real PostgreSQL", () => {
       expect((await q(`select 1 from companies c join benchmark_cases b on b.company_id = c.id`)).length).toBe(0);
     });
 
-    it("leaves undocumented settings NOT_CONFIGURED", async () => {
-      const s = await one<{ value: unknown }>(`select value from settings where key = 'delivery_slots_total'`);
-      expect(s.value).toBeNull();
+    it("leaves undocumented settings NOT_CONFIGURED and marks agreed defaults as defaults", async () => {
+      const rows = await q<{ key: string; value: unknown; config_origin: string }>(`select key, value, config_origin from settings`);
+      const byKey = Object.fromEntries(rows.map((r) => [r.key, r]));
+      expect(byKey.delivery_slots_total?.value).toBeNull();
+      expect(byKey.conversation_worthiness_bar?.value).toBeNull();
+      expect(byKey.qualify_score_threshold).toMatchObject({ value: 55, config_origin: "default" });
+      expect(byKey.qualify_confidence_threshold).toMatchObject({ value: 0.6, config_origin: "default" });
+      expect(byKey.commercial_potential_floor_zar).toMatchObject({ value: 3500, config_origin: "default" });
+      expect(byKey.ai_monthly_cap_zar).toMatchObject({ value: 500, config_origin: "default" });
+      expect(byKey.ai_monthly_cap_usd).toBeUndefined();
+    });
+
+    it("assigns every service to a capabilities-guide category", async () => {
+      const rows = await q<{ category: string; services: number }>(
+        `select sc.key as category, count(cs.id)::int as services from service_categories sc
+         left join covenant_services cs on cs.service_category_id = sc.id group by sc.key order by sc.key`,
+      );
+      expect(rows).toEqual([
+        { category: "b2b_revenue_pipeline_strategy", services: 3 },
+        { category: "branding_creative_direction", services: 3 },
+        { category: "combined", services: 1 },
+        { category: "content_media_production", services: 4 },
+        { category: "web_design_engineering", services: 5 },
+      ]);
+      expect(await q(`select key from covenant_services where service_category_id is null`)).toEqual([]);
+    });
+
+    it("seeds signal decay and axis as operator-adjustable defaults", async () => {
+      const rows = await q<{ key: string; axis: string; decay_days: number; config_origin: string }>(
+        `select key, axis, decay_days, config_origin from signal_types`,
+      );
+      const byKey = Object.fromEntries(rows.map((r) => [r.key, r]));
+      expect(byKey.matchday_scramble?.decay_days).toBe(60);
+      expect(byKey.procurement_scorecard?.decay_days).toBe(180);
+      expect(byKey.brand_upgrade_need?.decay_days).toBe(120);
+      expect(rows.every((r) => r.decay_days !== null && r.axis !== null && r.config_origin === "default")).toBe(true);
+      expect(rows.filter((r) => r.decay_days === 90).length).toBe(17);
+      expect(byKey.sponsorship_inventory?.axis).toBe("intent");
+      expect(byKey.catalogue_friction?.axis).toBe("opportunity");
+    });
+
+    it("marks disqualifiers human-only except bureaucratic_procurement", async () => {
+      const rows = await q<{ key: string; human_only: boolean; evidence_requirement: string }>(
+        `select key, human_only, evidence_requirement from disqualifiers order by key`,
+      );
+      expect(rows.filter((r) => !r.human_only).map((r) => r.key)).toEqual(["bureaucratic_procurement"]);
+      expect(rows.every((r) => r.evidence_requirement)).toBe(true);
     });
 
     it("is idempotent", async () => {
@@ -451,7 +497,51 @@ describe.skipIf(!adminUrl)("M0 schema against real PostgreSQL", () => {
     });
   });
 
+  describe("disqualifiers", () => {
+    it("never lets a human-only disqualifier fire on non-operator evidence", async () => {
+      const c = await company();
+      const l = await lead(c);
+      const auditEvidence = await evidenceRow(c, await fetchRecord(c));
+      const opRecord = (
+        await one<{ id: string }>(
+          `insert into source_records (source_id, company_id, retrieval_method, fetched_at, fetch_outcome, attributed_to, raw_content)
+           values ($1, $2, 'operator_statement', now(), 'not_applicable', 'operator', 'Owner said on a call they have no revenue yet') returning id`,
+          [await idOf("sources", "human_operator"), c],
+        )
+      ).id;
+      const opEvidence = (
+        await one<{ id: string }>(
+          `insert into evidence (company_id, source_record_id, producer, claim_key, claim, claim_type, value, observed_at)
+           values ($1, $2, 'operator', 'company.revenue_status', 'Owner reports no revenue yet', 'REPORTED', 'pre-revenue', now()) returning id`,
+          [c, opRecord],
+        )
+      ).id;
+      const fire = async (key: string, evidenceId: string) =>
+        pool.query(
+          `insert into lead_disqualifications (lead_id, disqualifier_id, evidence_id, recorded_by) values ($1, $2, $3, 'x')`,
+          [l, await idOf("disqualifiers", key), evidenceId],
+        );
+      await rejects(fire("zero_revenue_speculative", auditEvidence), PG.check);
+      await fire("zero_revenue_speculative", opEvidence);
+      await fire("bureaucratic_procurement", auditEvidence);
+    });
+  });
+
   describe("human judgement", () => {
+    it("takes reason codes from the lookup table, extendable without a migration", async () => {
+      const l = await lead(await company());
+      const s = await score(l);
+      const judge = (reason: string) =>
+        pool.query(
+          `insert into judgements (lead_id, context, score_id, verdict, reason_code, actor) values ($1, 'review', $2, 'NO', $3, 'operator')`,
+          [l, s, reason],
+        );
+      await rejects(judge("not_a_reason"), PG.foreignKey);
+      await pool.query(`insert into judgement_reasons (key, label, config_origin) values ('channel_unsuitable', 'Channel unsuitable', 'operator')`);
+      await judge("channel_unsuitable");
+      await rejects(judge("other"), PG.check, "judgements_other_has_notes");
+    });
+
     it("ties a review judgement to a score of the same lead", async () => {
       const l1 = await lead(await company());
       const l2 = await lead(await company());

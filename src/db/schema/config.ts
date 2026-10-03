@@ -15,7 +15,16 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { id, timestamps } from "./common";
-import { billingPeriod, opportunityTypeOrigin, revenueModel, scoreAxis, serviceUnit, signalKind } from "./enums";
+import { billingPeriod, configOrigin, opportunityTypeOrigin, revenueModel, scoreAxis, serviceUnit, signalKind } from "./enums";
+
+// Capabilities guide service groups. A lookup table, not an enum: Covenant can add one.
+export const serviceCategories = pgTable("service_categories", {
+  id: id(),
+  key: text("key").notNull().unique(),
+  name: text("name").notNull(),
+  sortOrder: smallint("sort_order").notNull().default(0),
+  ...timestamps(),
+});
 
 export const covenantServices = pgTable(
   "covenant_services",
@@ -23,8 +32,7 @@ export const covenantServices = pgTable(
     id: id(),
     key: text("key").notNull().unique(),
     name: text("name").notNull(),
-    // Null until the capabilities guide is read directly; never guessed.
-    category: text("category"),
+    serviceCategoryId: uuid("service_category_id").references(() => serviceCategories.id, { onDelete: "restrict" }),
     unit: serviceUnit("unit").notNull(),
     revenueModel: revenueModel("revenue_model").notNull(),
     billingPeriod: billingPeriod("billing_period").notNull(),
@@ -112,6 +120,8 @@ export const signalTypes = pgTable(
     decayDays: integer("decay_days"),
     detectableFrom: text("detectable_from"),
     group: text("group"),
+    // Covers axis and decay_days, which are operator-adjustable defaults.
+    configOrigin: configOrigin("config_origin").notNull().default("documented"),
     active: boolean("active").notNull().default(true),
     ...timestamps(),
   },
@@ -163,9 +173,11 @@ export const disqualifiers = pgTable("disqualifiers", {
   key: text("key").notNull().unique(),
   name: text("name").notNull(),
   evidenceRequirement: text("evidence_requirement"),
-  // Capitalisation and ethical alignment are largely undetectable from a website:
-  // surfaced as verification prompts, not scored.
-  detectableFromWebsite: boolean("detectable_from_website").notNull(),
+  // Human-only rules can never fire automatically: they need operator-supplied evidence
+  // (enforced by trigger on lead_disqualifications).
+  humanOnly: boolean("human_only").notNull(),
+  // Covers evidence_requirement and human_only.
+  configOrigin: configOrigin("config_origin").notNull().default("documented"),
   active: boolean("active").notNull().default(true),
   ...timestamps(),
 });
@@ -213,6 +225,20 @@ export const settings = pgTable("settings", {
   key: text("key").primaryKey(),
   value: jsonb("value"),
   description: text("description").notNull(),
+  configOrigin: configOrigin("config_origin").notNull().default("documented"),
   updatedBy: text("updated_by"),
+  ...timestamps(),
+});
+
+// Judgement reason codes. A lookup table, not an enum: the learning loop exists to
+// discover new reasons, and adding one must not need a migration.
+export const judgementReasons = pgTable("judgement_reasons", {
+  id: id(),
+  key: text("key").notNull().unique(),
+  label: text("label").notNull(),
+  description: text("description"),
+  sortOrder: smallint("sort_order").notNull().default(0),
+  active: boolean("active").notNull().default(true),
+  configOrigin: configOrigin("config_origin").notNull().default("documented"),
   ...timestamps(),
 });

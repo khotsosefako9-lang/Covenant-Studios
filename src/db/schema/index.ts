@@ -6,5 +6,6 @@ export * from "./audit";
 export * from "./commercial";
 export * from "./leads";
 export * from "./benchmark";
+export * from "./ingest";
 export * from "./ai";
 export * from "./views";

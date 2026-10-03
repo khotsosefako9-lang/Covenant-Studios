@@ -9,7 +9,6 @@ import {
   integer,
   numeric,
   pgTable,
-  primaryKey,
   text,
   uuid,
 } from "drizzle-orm/pg-core";
@@ -50,6 +49,8 @@ export const sourceRecords = pgTable(
     byteSize: bigint("byte_size", { mode: "number" }),
     // Raw retrieved body (HTML, robots.txt, CSV text, operator statement).
     rawContent: text("raw_content"),
+    // Original file name for a CSV import.
+    fileName: text("file_name"),
     // Operator name for REPORTED operator statements and manual entry.
     attributedTo: text("attributed_to"),
     traceId: text("trace_id"),
@@ -110,20 +111,3 @@ export const evidence = pgTable(
   ],
 );
 
-// What an INFERRED (or derived) evidence row was reasoned from.
-export const evidenceDerivations = pgTable(
-  "evidence_derivations",
-  {
-    evidenceId: uuid("evidence_id")
-      .notNull()
-      .references(() => evidence.id, { onDelete: "cascade" }),
-    derivedFromId: uuid("derived_from_id")
-      .notNull()
-      .references(() => evidence.id, { onDelete: "restrict" }),
-    ...timestamps(),
-  },
-  (t) => [
-    primaryKey({ columns: [t.evidenceId, t.derivedFromId] }),
-    check("evidence_derivations_not_self", sql`${t.evidenceId} <> ${t.derivedFromId}`),
-  ],
-);

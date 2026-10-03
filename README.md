@@ -46,7 +46,7 @@ weights, intent gate and benchmark dataset. Schema code lives in `src/db/schema/
 | --- | --- |
 | Identity | `companies`, `company_aliases`, `company_duplicate_candidates`, `contacts`, `contact_channels` |
 | Observed facts | `sources`, `source_records` (one retrieval each: page, robots.txt, CSV, operator statement) |
-| Evidence | `evidence`, `evidence_derivations`, view `evidence_provenance` |
+| Evidence | `evidence`, view `evidence_provenance` |
 | Deterministic audit | `audits`, `audit_findings`, `audit_finding_evidence`, `finding_verifications` |
 | Commercial signals | `signals`, `signal_evidence`, `signal_findings` |
 | Opportunity interpretation | `opportunities`, `opportunity_findings`, `opportunity_signals` |
@@ -54,8 +54,9 @@ weights, intent gate and benchmark dataset. Schema code lives in `src/db/schema/
 | Scoring | `scores`, `score_dimensions`, `score_dimension_evidence` |
 | Human judgement | `judgements`, `judgement_evidence` |
 | Benchmark (evaluation only) | `benchmark_categories`, `benchmark_cases` |
+| Ingestion | `csv_import_rows` |
 | AI brief and cost | `ai_models`, `ai_runs`, `ai_run_packet_evidence`, `opportunity_briefs`, `brief_claims`, `brief_claim_evidence` |
-| Configuration | `covenant_services`, `opportunity_types`, `opportunity_type_services`, `finding_opportunity_mappings`, `signal_types`, `signal_type_opportunity_types`, `icp_segments`, `icp_segment_services`, `disqualifiers`, `weight_sets`, `settings` |
+| Configuration | `service_categories`, `covenant_services`, `opportunity_types`, `opportunity_type_services`, `finding_opportunity_mappings`, `signal_types`, `signal_type_opportunity_types`, `icp_segments`, `icp_segment_services`, `disqualifiers`, `judgement_reasons`, `weight_sets`, `settings` |
 | Operations | `system_events` |
 
 There is no generic `leads` mega-table: a lead holds only the pursuit state, the intent gate and a
@@ -90,7 +91,10 @@ pointer to its current score.
   set's weights are frozen once any score uses it (trigger). Adjusting weights means a new version.
 - **Judgements.** Append-only (trigger). A `review` judgement must reference a score **of the same lead**
   (composite foreign key). A `benchmark_blind` judgement must have no score, because the operator
-  judges before seeing system output. Reason `other` requires notes.
+  judges before seeing system output. Reason `other` requires notes. Reason codes come from the
+  `judgement_reasons` lookup table (foreign key), so a new code is a row, not a migration.
+- **Human-only disqualifiers** (trigger). A disqualifier with `human_only` can only be recorded against
+  evidence produced by an operator, so it can never fire automatically.
 - **Benchmark cases.** One per category, one per company. Selection criteria, typicality rationale,
   alternatives considered and selector are required. The linked human verdict must be a
   `benchmark_blind` judgement (composite foreign key). A disagreement outcome requires a diagnosis.
@@ -115,7 +119,72 @@ pointer to its current score.
   alone. Settings without a documented value are seeded as `null` (NOT_CONFIGURED).
 - **JSONB is limited** to `icp_segments.criteria`, `settings.value` and `system_events.context`. The first
   two are validated with Zod in `src/db/validation.ts`.
+- **Enums only for closed sets.** Taxonomies Covenant may extend are lookup tables: service categories
+  and judgement reason codes. The remaining enums (claim types, lead and gate states, verdicts, audit,
+  fetch and finding states, score dimensions) are fixed by the architecture. Changing them means code
+  changes as well, so a migration is the right cost.
+- **Configuration provenance.** `settings`, `signal_types`, `disqualifiers` and `judgement_reasons` carry
+  `config_origin`: `documented` (from a source document), `default` (an operator-adjustable default
+  agreed with Covenant, not a fact) or `operator` (edited by an operator; the seed never touches it).
+- **Tables beyond the Phase 0 entity list.** `finding_verifications` stays: finding accuracy (≥ 95%) and
+  the false-positive rate are M0 hard gates. They need a stored human truth label per finding, kept
+  apart from the deterministic finding itself, with history. `evidence_derivations` was dropped in
+  Phase 3: nothing in M0 writes `INFERRED` evidence rows. Audit output is `VERIFIED`, ingest and operator
+  input are `REPORTED`, and interpretations live in `opportunities` and `brief_claims` with their own
+  evidence links. See DEFERRED.
 - `is_demo` is on `companies` only. The production insert guard belongs with deployment and is not built.
+
+## Phase 3 — company ingestion
+
+Manual entry and CSV import, with no fetching, auditing or AI.
+
+- **Pure core functions** (`src/core/`, no I/O):
+  - `normaliseDomain` reduces a website to its identity domain: lower case, punycode, no scheme, path,
+    port, credentials or `www.`. It rejects emails, IP addresses and hosts with no suffix. Shared
+    platforms (Facebook, Instagram, Linktree, wa.me, Google Sites…) are not a company's own domain.
+    Such a company is imported without a domain, and the URL is kept as evidence.
+  - `normaliseCompanyName` strips SA legal forms such as (Pty) Ltd, CC and NPC. `splitTradingAs` splits
+    "X t/a Y" into a legal name and a trading name.
+  - `normalisePhone` produces E.164 (+27…). `normaliseEmail` lower-cases and validates.
+  - `parseCsv` is an RFC 4180 parser.
+  - `validateCompanyInput` reports every issue in a row. `findDuplicateCandidates` proposes pairs.
+- **Identity rule.** An exact domain match is the same company. The row is recorded as
+  `matched_existing` and nothing is written to the existing company. Everything else creates a company
+  and proposes `company_duplicate_candidates` for a human:
+  - name similarity at or above the `dedupe_name_similarity_threshold` setting (default 0.6)
+  - subdomain relations
+  - shared phone numbers or email addresses
+
+  Nothing is ever merged. Subdomains are not collapsed to a registrable domain, because that needs the
+  public suffix list (a new dependency). A subdomain relation is proposed as a candidate instead.
+- **Provenance.**
+  - Each CSV file is one `source_records` row (`csv_import`) holding the raw file, a SHA-256 hash, the
+    file name and the operator.
+  - A manual entry is a `manual_entry` source record holding the submitted fields.
+  - Every supplied field becomes `REPORTED` evidence, attributed through its source record. The locator
+    reads like `row 7, column "Website"`.
+  - Phone and email become `contact_channels` linked to their evidence. Legal and trading names become
+    aliases.
+- **CSV rows are never discarded.** Every data row lands in `csv_import_rows` with its line number,
+  raw values, status and issue codes plus readable detail:
+  - `imported`
+  - `matched_existing`
+  - `invalid` (validation errors, wrong column count)
+  - `failed` (unexpected error)
+
+  Each row runs in its own savepoint, so one failing row never stops the batch. Problems with the
+  whole file are rejected before anything is written: unparseable, no name column, over 5 MB or 5,000
+  rows, or an identical file already imported.
+- **Interfaces.** Command line only, until the lead review UI (Phase 12) and authentication exist:
+
+```sh
+npm run import:csv -- prospects.csv --by "Khotso"
+npm run company:add -- --name "Acme Supplies (Pty) Ltd" --website acme.co.za --phone "041 123 4567" --by "Khotso"
+```
+
+  Recognised CSV columns, case-insensitive: name/company/company name/business name, website/url/domain,
+  legal name, trading name, industry/sector, location/city/town/area, phone/telephone/tel,
+  email/e-mail. Other columns are reported as ignored.
 
 ## Running locally
 
@@ -141,4 +210,6 @@ and target phase, and are not built in M0.
 | `activities`, `deals` | Pipeline outcomes are not part of M0 | Outreach | Attribution of revenue | M4 |
 | `overrides` (generic AI-vs-human field overrides) | The only M0 override is the intent gate's, stored on `leads` | Lead review UI beyond M0 | Story 8 | M1 |
 | Users and roles tables | M0 actor columns are plain text; admin/operator auth is not in the build list | Auth decision | Access control | M1 |
+| `evidence_derivations` (links an `INFERRED` evidence row to the evidence it was reasoned from) | Dropped in Phase 3: no M0 component writes `INFERRED` evidence rows | A layer that writes inferred facts, e.g. AI industry classification | Full inference chains for inferred company facts | M1 |
+| Operator UI for manual entry, CSV upload and duplicate resolution | No authentication yet; the CLI covers M0 operation | Auth, lead review UI | Operator workflow without a terminal | Phase 12 / M1 |
 | `is_demo` production insert guard | Needs the deployment environment decided | Deployment | Test-data isolation | Deployment |

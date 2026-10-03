@@ -15,13 +15,12 @@ import {
 } from "drizzle-orm/pg-core";
 import { audits } from "./audit";
 import { id, timestamps, tstz } from "./common";
-import { disqualifiers, icpSegments, weightSets } from "./config";
+import { disqualifiers, icpSegments, judgementReasons, weightSets } from "./config";
 import {
   channelSuitability,
   intentGateBasis,
   intentGateStatus,
   judgementContext,
-  judgementReason,
   leadState,
   leadStatus,
   scoreDimension,
@@ -195,7 +194,9 @@ export const judgements = pgTable(
     // where the operator judges before any system output is shown.
     scoreId: uuid("score_id"),
     verdict: verdict("verdict").notNull(),
-    reasonCode: judgementReason("reason_code").notNull(),
+    reasonCode: text("reason_code")
+      .notNull()
+      .references(() => judgementReasons.key, { onDelete: "restrict", onUpdate: "cascade" }),
     notes: text("notes"),
     actor: text("actor").notNull(),
     judgedAt: tstz("judged_at").notNull().defaultNow(),

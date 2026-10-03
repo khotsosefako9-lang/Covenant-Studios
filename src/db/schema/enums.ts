@@ -161,18 +161,6 @@ export const scoreDimension = pgEnum("score_dimension", [
 
 export const verdict = pgEnum("verdict", ["YES", "MAYBE", "NO"]);
 
-export const judgementReason = pgEnum("judgement_reason", [
-  "strong_commercial_opportunity",
-  "good_service_fit",
-  "poor_digital_presence",
-  "too_small",
-  "no_obvious_budget",
-  "wrong_industry",
-  "already_well_served",
-  "no_urgency",
-  "other",
-]);
-
 export const judgementContext = pgEnum("judgement_context", ["benchmark_blind", "review"]);
 
 export const benchmarkOutcome = pgEnum("benchmark_outcome", [
@@ -199,3 +187,13 @@ export const briefField = pgEnum("brief_field", [
   "confidence",
   "needs_verification",
 ]);
+
+// --- Configuration provenance ---------------------------------------------
+
+// Where a configuration value came from: a source document, an operator-adjustable
+// default agreed with Covenant, or an operator's own edit.
+export const configOrigin = pgEnum("config_origin", ["documented", "default", "operator"]);
+
+// --- Ingestion ------------------------------------------------------------
+
+export const csvRowStatus = pgEnum("csv_row_status", ["imported", "matched_existing", "invalid", "failed"]);

@@ -13,7 +13,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { id, timestamps, tstz } from "./common";
-import { claimType, evidenceProducer, fetchOutcome, retrievalMethod, sourceKind } from "./enums";
+import { claimType, evidenceProducer, fetchOutcome, fetchPurpose, retrievalMethod, sourceKind } from "./enums";
 import { companies } from "./identity";
 
 export const sources = pgTable("sources", {
@@ -51,6 +51,21 @@ export const sourceRecords = pgTable(
     rawContent: text("raw_content"),
     // Original file name for a CSV import.
     fileName: text("file_name"),
+    // --- HTTP fetches only (retrieval_method = 'http_fetch') ---
+    purpose: fetchPurpose("purpose"),
+    // host[:port] the request targeted; the unit of robots, rate limiting and budgets.
+    host: text("host"),
+    // The exact User-Agent sent, so every request in a prospect's log is traceable here.
+    userAgent: text("user_agent"),
+    attempts: integer("attempts"),
+    redirectChain: text("redirect_chain").array(),
+    etag: text("etag"),
+    lastModified: text("last_modified"),
+    // 304 Not Modified: the earlier record whose content is still current.
+    revalidatedFromId: uuid("revalidated_from_id").references((): AnyPgColumn => sourceRecords.id, { onDelete: "restrict" }),
+    // The robots.txt record that allowed or blocked this request.
+    robotsSourceRecordId: uuid("robots_source_record_id").references((): AnyPgColumn => sourceRecords.id, { onDelete: "restrict" }),
+    errorDetail: text("error_detail"),
     // Operator name for REPORTED operator statements and manual entry.
     attributedTo: text("attributed_to"),
     traceId: text("trace_id"),
@@ -59,9 +74,20 @@ export const sourceRecords = pgTable(
   (t) => [
     index("source_records_company_fetched").on(t.companyId, t.fetchedAt),
     index("source_records_hash").on(t.contentHash),
+    index("source_records_host_purpose").on(t.host, t.purpose, t.fetchedAt),
+    index("source_records_url").on(t.url, t.fetchedAt),
     check(
       "source_records_fetch_has_url",
-      sql`${t.retrievalMethod} <> 'http_fetch' or (${t.url} is not null and ${t.fetchOutcome} <> 'not_applicable')`,
+      sql`${t.retrievalMethod} <> 'http_fetch' or (${t.url} is not null and ${t.fetchOutcome} <> 'NOT_APPLICABLE')`,
+    ),
+    check(
+      "source_records_fetch_fields",
+      sql`(${t.retrievalMethod} = 'http_fetch') = (${t.purpose} is not null and ${t.host} is not null and ${t.userAgent} is not null)`,
+    ),
+    // A robots-blocked page was never requested: no status, and the robots record proving the block.
+    check(
+      "source_records_blocked_proof",
+      sql`${t.fetchOutcome} <> 'SOURCE_BLOCKED' or (${t.robotsSourceRecordId} is not null and ${t.httpStatus} is null and ${t.rawContent} is null)`,
     ),
     check(
       "source_records_human_attributed",

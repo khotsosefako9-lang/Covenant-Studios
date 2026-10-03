@@ -241,6 +241,121 @@ npm run duplicates -- show    <companyId>
 - **Prices** match the transcription supplied with the Phase 4 authorization exactly, and a test now
   pins them.
 
+## Phase 5 — fetch layer
+
+`src/fetch/` is the only code permitted to contact prospect infrastructure. An architecture test fails
+the build if any other file imports undici, `node:http(s)`, `node:net` or `node:tls`, or calls
+`fetch()`.
+
+### Identity
+
+```
+User-Agent: CovenantStudiosBot/0.1 (+https://www.covenant-studios.co.za)
+robots.txt product token: CovenantStudiosBot
+```
+
+It is a constant in `src/fetch/identity.ts`, not a setting, so it cannot be rotated. Every source record
+stores the exact User-Agent it was fetched with.
+
+### What a fetch does
+
+1. **Pause switch.** If `fetch_paused` is on, nothing is requested. The switch is checked before every
+   attempt, retry and redirect hop, and a missing setting counts as paused.
+2. **Cache.** A page fetched `OK` within `fetch_cache_ttl_hours` is served from its stored record with no
+   request. After that, the fetch is a conditional request (`If-None-Match` / `If-Modified-Since`). A
+   `304` is recorded as `OK` with `revalidated_from_id` pointing at the record that holds the body. A
+   `200` whose content hash equals the previous one returns `unchanged: true`. Either way, downstream
+   analysis can skip it.
+3. **robots.txt for every host in the chain**, including cross-host redirect targets, per RFC 9309:
+   - It is stored as its own source record (`purpose = robots`) and reused for up to 24 hours.
+   - It is matched on our product token, falling back to `*`; the longest rule wins and ties go to allow.
+   - 4xx means allow; 429, 5xx or no response means complete disallow.
+   - A disallowed page is recorded as `SOURCE_BLOCKED` with no request made. The database enforces this:
+     no HTTP status, no body, and a link to the robots record that blocked it.
+   - Nothing retries a disallow.
+4. **Politeness.**
+   - One request at a time per host.
+   - At least `fetch_min_delay_ms` (2s) between the end of one request and the start of the next,
+     raised to robots `Crawl-delay` when that is longer.
+   - A 429's `Retry-After` holds that host until it expires.
+   - A per-host request budget per run (`fetch_host_budget_per_run`), robots.txt included.
+5. **Limits.**
+   - Connect and read timeouts.
+   - A body cap with a hard abort (`fetch_max_body_bytes`): an oversized `Content-Length` is refused
+     before download, and a streamed body is cut off at the cap.
+   - Only HTML is read; any other content type is recorded and its body never read.
+   - Manual redirects with a hop cap and loop detection.
+   - Up to 3 retries for transient failures (timeouts, connection errors, 5xx), backing off at 2×, 4×
+     and 8× the host's gap. There are no retries for robots disallow, 403, 429 or TLS failures.
+6. **One source record per fetch**, whatever happens. It holds the outcome, status, attempts, redirect
+   chain, validators, content hash and body.
+
+Outcomes (`fetch_outcome`) are data states:
+
+| Outcome | Meaning |
+| --- | --- |
+| `OK` | Page retrieved, or revalidated by a 304 |
+| `SOURCE_BLOCKED` | robots.txt disallows it; nothing was requested |
+| `BLOCKED_BY_SERVER` | 403 or 429 |
+| `HTTP_ERROR` | Any other non-2xx, e.g. 404, or 5xx after retries |
+| `TIMEOUT` | Connect or read timeout |
+| `UNREACHABLE` | Connection refused, DNS failure, reset |
+| `TLS_ERROR` | Certificate or TLS failure; verification is never relaxed |
+| `TOO_LARGE` | Body over the cap |
+| `REDIRECT_LOOP` | Loop or hop cap exceeded |
+| `UNSUPPORTED_CONTENT_TYPE` | Not HTML |
+
+The earlier lowercase labels were renamed in place (migration 0004, `RENAME VALUE`), so no stored row
+changed.
+
+**Politeness floors are part of the settings schema.** The delay can't go below 2s, retries can't go
+above 3, and the robots cache can't exceed 24 hours. Operators can make the crawler slower or stricter,
+never faster.
+
+### Forbidden, and not behind any flag
+
+- User-agent rotation or browser user-agent strings
+- Proxies or IP rotation
+- CAPTCHA handling
+- Headless browsers
+- Disabling TLS verification
+- Any route around robots.txt
+
+An architecture test scans the source (code, not comments) for these and fails the build if one
+appears. `FetchRun` accepts a transport (`dispatcher`) for tests and for egress a hosting network
+mandates. It can't change the User-Agent or bypass robots.txt, both of which are applied above the
+transport. Only the opt-in live test passes one.
+
+### Commands
+
+```sh
+npm run fetch -- status
+npm run fetch -- pause  --by "Khotso"
+npm run fetch -- resume --by "Khotso"
+npm run fetch -- url https://example.co.za/ [--company <companyId>]
+```
+
+### Company-scoped reads
+
+A merged company keeps its own rows, so reading by one `company_id` silently misses everything its
+cluster absorbed. `src/db/company-scope.ts` is the default read path:
+- `inCompanyCluster(column, companyId)`
+- `getCompanyEvidence`
+- `getCompanyFindings`
+- `getCompanySignals`
+
+Any member id resolves to the whole cluster. An architecture test fails on a direct
+`eq(<table>.companyId, …)` filter outside identity code, and a test asserts that a merged company's
+evidence, findings and signals surface through a cluster read.
+
+### Robustness fixes found while testing
+
+- Destroying an undici response body without an error listener raised an uncaught `AbortError`, which
+  would have killed the worker on every oversized or non-HTML response. Abandoned bodies are now
+  destroyed quietly, and error bodies are drained.
+- The Postgres pool had no `error` listener, so a server-side termination of an idle connection (restart,
+  failover) would have crashed the process. It is now logged, and the client is replaced.
+
 ## Running locally
 
 Requires Node 22.12+ and PostgreSQL.
@@ -269,4 +384,7 @@ and target phase, and are not built in M0.
 | Operator UI for manual entry, CSV upload and duplicate resolution | No authentication yet; the CLI covers M0 operation | Auth, lead review UI | Operator workflow without a terminal | Phase 12 / M1 |
 | CSV enrichment of an existing company | An exact domain match writes nothing, so a CSV cannot add evidence to a company that already exists | A rule for attributing new REPORTED evidence to an existing identity | Keeping records current from repeat imports | M4 |
 | Lead reconciliation on merge | A merge leaves each company's leads where they are, so a cluster can hold two open leads | Lead state machine (Phases 10–11) | One pursuit per business | Phase 10 |
+| Cross-process rate limiting | The per-host limiter is in-process; M0 runs one fetching worker | A second worker process | Politeness held across processes and restarts (advisory lock + next-request time per host) | Before scaling workers |
+| Rendering JavaScript-only pages | Phase 0 makes headless rendering opt-in per check; no browser in Phase 5 | The audit check set (Phase 6) identifying checks that need it | Audits of JS-only sites | Phase 6 or later, with approval |
+| Charset from `<meta charset>` | The body is decoded by the `Content-Type` charset, else UTF-8; reading `<meta>` is parsing | Phase 6 parsing | Correct text on pages that declare their charset only in HTML | Phase 6 |
 | `is_demo` production insert guard | Needs the deployment environment decided | Deployment | Test-data isolation | Deployment |

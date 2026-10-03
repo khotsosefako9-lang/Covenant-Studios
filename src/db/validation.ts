@@ -39,6 +39,18 @@ export const settingSchemas = {
   quote_policy: z.enum(["fixed_locked_at_signoff"]),
   deposit_percent: z.number().min(0).max(100),
   post_launch_warranty_days: z.number().int().nonnegative(),
+  // Fetch layer. Politeness floors are part of the schema: a value below them is rejected,
+  // so an operator can make the crawler slower or stricter but never faster or pushier.
+  fetch_paused: z.boolean(),
+  fetch_min_delay_ms: z.number().int().min(2000),
+  fetch_max_retries: z.number().int().min(0).max(3),
+  fetch_connect_timeout_ms: z.number().int().min(1000).max(60_000),
+  fetch_read_timeout_ms: z.number().int().min(1000).max(120_000),
+  fetch_max_body_bytes: z.number().int().min(10_000).max(20_000_000),
+  fetch_max_redirects: z.number().int().min(0).max(10),
+  fetch_host_budget_per_run: z.number().int().min(1).max(200),
+  fetch_cache_ttl_hours: z.number().min(0),
+  robots_cache_ttl_hours: z.number().min(0).max(24),
 } as const;
 
 export type SettingKey = keyof typeof settingSchemas;

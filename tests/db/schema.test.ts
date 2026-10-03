@@ -31,8 +31,8 @@ async function company(domain: string | null = null, name = "Acme Supplies") {
 async function fetchRecord(companyId: string, url = "https://acme.co.za/") {
   return (
     await one<{ id: string }>(
-      `insert into source_records (source_id, company_id, retrieval_method, url, fetched_at, fetch_outcome, http_status)
-       values ($1, $2, 'http_fetch', $3, now(), 'ok', 200) returning id`,
+      `insert into source_records (source_id, company_id, retrieval_method, url, fetched_at, fetch_outcome, http_status, purpose, host, user_agent)
+       values ($1, $2, 'http_fetch', $3, now(), 'OK', 200, 'page', 'acme.co.za', 'test') returning id`,
       [await idOf("sources", "website_fetch"), companyId, url],
     )
   ).id;
@@ -373,7 +373,7 @@ describe.skipIf(!adminUrl)("M0 schema against real PostgreSQL", () => {
       const src = await idOf("sources", "human_operator");
       await rejects(
         pool.query(
-          `insert into source_records (source_id, company_id, retrieval_method, fetched_at, fetch_outcome) values ($1, $2, 'http_fetch', now(), 'ok')`,
+          `insert into source_records (source_id, company_id, retrieval_method, fetched_at, fetch_outcome, purpose, host, user_agent) values ($1, $2, 'http_fetch', now(), 'OK', 'page', 'x.co.za', 'test')`,
           [src, c],
         ),
         PG.check,
@@ -381,7 +381,7 @@ describe.skipIf(!adminUrl)("M0 schema against real PostgreSQL", () => {
       );
       await rejects(
         pool.query(
-          `insert into source_records (source_id, company_id, retrieval_method, fetched_at, fetch_outcome) values ($1, $2, 'operator_statement', now(), 'not_applicable')`,
+          `insert into source_records (source_id, company_id, retrieval_method, fetched_at, fetch_outcome) values ($1, $2, 'operator_statement', now(), 'NOT_APPLICABLE')`,
           [src, c],
         ),
         PG.check,
@@ -424,8 +424,8 @@ describe.skipIf(!adminUrl)("M0 schema against real PostgreSQL", () => {
       );
       const robots = (
         await one<{ id: string }>(
-          `insert into source_records (source_id, company_id, retrieval_method, url, fetched_at, fetch_outcome, http_status, raw_content)
-           values ($1, $2, 'http_fetch', 'https://x.co.za/robots.txt', now(), 'blocked_by_robots', 200, 'User-agent: *\nDisallow: /') returning id`,
+          `insert into source_records (source_id, company_id, retrieval_method, url, fetched_at, fetch_outcome, http_status, raw_content, purpose, host, user_agent)
+           values ($1, $2, 'http_fetch', 'https://x.co.za/robots.txt', now(), 'OK', 200, 'User-agent: *\nDisallow: /', 'robots', 'x.co.za', 'test') returning id`,
           [await idOf("sources", "website_fetch"), c],
         )
       ).id;
@@ -572,7 +572,7 @@ describe.skipIf(!adminUrl)("M0 schema against real PostgreSQL", () => {
       const opRecord = (
         await one<{ id: string }>(
           `insert into source_records (source_id, company_id, retrieval_method, fetched_at, fetch_outcome, attributed_to, raw_content)
-           values ($1, $2, 'operator_statement', now(), 'not_applicable', 'operator', 'Owner said on a call they have no revenue yet') returning id`,
+           values ($1, $2, 'operator_statement', now(), 'NOT_APPLICABLE', 'operator', 'Owner said on a call they have no revenue yet') returning id`,
           [await idOf("sources", "human_operator"), c],
         )
       ).id;

@@ -29,6 +29,13 @@
       "when": 1791053061180,
       "tag": "0003_phase4_identity_resolution",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791053714245,
+      "tag": "0004_phase5_fetch_layer",
+      "breakpoints": true
     }
   ]
 }

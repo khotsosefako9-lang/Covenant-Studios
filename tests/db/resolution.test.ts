@@ -1,5 +1,6 @@
 import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { getCompanyEvidence, getCompanyFindings, getCompanySignals } from "@/db/company-scope";
 import { confirmDuplicate, deferDuplicate, getIdentityCluster, rejectDuplicate, unmerge } from "@/identity/resolution";
 import { importCsv } from "@/ingest/companies";
 import { PG, adminUrl, createTestDb, rejects } from "./harness";
@@ -55,15 +56,15 @@ async function richCompany(domain: string, name: string) {
   ]);
   const fetchSr = (
     await one<{ id: string }>(
-      `insert into source_records (source_id, company_id, retrieval_method, url, fetched_at, fetch_outcome, http_status, raw_content)
-       values ($1, $2, 'http_fetch', $3, now(), 'ok', 200, '<html></html>') returning id`,
+      `insert into source_records (source_id, company_id, retrieval_method, url, fetched_at, fetch_outcome, http_status, raw_content, purpose, host, user_agent)
+       values ($1, $2, 'http_fetch', $3, now(), 'OK', 200, '<html></html>', 'page', 'test', 'test') returning id`,
       [await idOf("sources", "website_fetch"), c, `https://${domain}/`],
     )
   ).id;
   const opSr = (
     await one<{ id: string }>(
       `insert into source_records (source_id, company_id, retrieval_method, fetched_at, fetch_outcome, attributed_to, raw_content)
-       values ($1, $2, 'manual_entry', now(), 'not_applicable', 'Khotso', '{}') returning id`,
+       values ($1, $2, 'manual_entry', now(), 'NOT_APPLICABLE', 'Khotso', '{}') returning id`,
       [await idOf("sources", "manual_entry"), c],
     )
   ).id;
@@ -183,6 +184,19 @@ describe.skipIf(!adminUrl)("identity resolution against real PostgreSQL", () => 
       expect(l).toEqual({ status: "merged", merged_into_id: winner.id, domain: "acmesupplies.co.za" });
     });
 
+    it("surfaces the merged company's evidence, findings and signals in cluster reads", async () => {
+      for (const via of [winner.id, loser.id]) {
+        const ev = await getCompanyEvidence(db, via);
+        expect(ev.map((e) => e.evidenceId).sort()).toEqual([...winner.evidence, ...loser.evidence].sort());
+        expect(ev.every((e) => e.retrievedAt instanceof Date)).toBe(true);
+        const findings = await getCompanyFindings(db, via);
+        expect(findings.map((f) => f.auditedCompanyId).sort()).toEqual([winner.id, loser.id].sort());
+        expect((await getCompanySignals(db, via)).map((x) => x.companyId).sort()).toEqual([winner.id, loser.id].sort());
+      }
+      // A direct read by the winner's id alone misses the absorbed company: the failure mode the view exists for.
+      expect((await q(`select 1 from evidence where company_id = $1`, [winner.id])).length).toBe(2);
+    });
+
     it("preserves the losing domain and names as aliases of the winner", async () => {
       const aliases = await q<{ kind: string; value: string }>(
         `select kind, value from company_aliases where company_id = $1 and merge_id = $2 order by kind::text, value`,
@@ -273,6 +287,8 @@ describe.skipIf(!adminUrl)("identity resolution against real PostgreSQL", () => 
         (aliasesBefore as { company_id: string }[]).filter((a) => a.company_id === winner.id || a.company_id === loser.id),
       );
       expect((await getIdentityCluster(db, loser.id))?.rootId).toBe(loser.id);
+      expect((await getCompanyEvidence(db, winner.id)).map((e) => e.evidenceId).sort()).toEqual([...winner.evidence].sort());
+      expect((await getCompanyFindings(db, loser.id)).map((f) => f.auditedCompanyId)).toEqual([loser.id]);
     });
 
     it("keeps the merge history and reopens the candidates for a fresh decision", async () => {

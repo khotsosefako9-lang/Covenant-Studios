@@ -328,6 +328,16 @@ export const settings: { key: SettingKey; value: unknown; origin: Origin; descri
   { key: "quote_policy", value: "fixed_locked_at_signoff", origin: "documented", description: "Quotes are fixed and locked at sign-off (Capabilities Guide delivery terms)." },
   { key: "deposit_percent", value: 50, origin: "documented", description: "Deposit required before work starts (Capabilities Guide delivery terms)." },
   { key: "post_launch_warranty_days", value: 30, origin: "documented", description: "Post-launch warranty period (Capabilities Guide delivery terms)." },
+  { key: "fetch_paused", value: false, origin: "default", description: "Global switch: true halts all outbound fetching before the next request." },
+  { key: "fetch_min_delay_ms", value: 2000, origin: "documented", description: "Minimum delay between requests to one host (floor 2000; robots crawl-delay can only raise it)." },
+  { key: "fetch_max_retries", value: 3, origin: "documented", description: "Retries for transient failures (timeouts, connection errors, 5xx), exponential backoff. Never for robots disallow, 403 or 429." },
+  { key: "fetch_connect_timeout_ms", value: 10000, origin: "default", description: "TCP/TLS connect timeout." },
+  { key: "fetch_read_timeout_ms", value: 20000, origin: "default", description: "Timeout waiting for response headers, and between body chunks." },
+  { key: "fetch_max_body_bytes", value: 5000000, origin: "default", description: "Hard abort above this response size (pages). robots.txt is capped separately at 500 KiB." },
+  { key: "fetch_max_redirects", value: 5, origin: "default", description: "Redirect hop cap; a repeated URL is a loop." },
+  { key: "fetch_host_budget_per_run", value: 20, origin: "default", description: "Maximum requests to one host in one fetch run, robots.txt included." },
+  { key: "fetch_cache_ttl_hours", value: 24, origin: "default", description: "A page fetched OK within this window is served from the stored record; after it, a conditional request is used." },
+  { key: "robots_cache_ttl_hours", value: 24, origin: "default", description: "How long a fetched robots.txt is reused (RFC 9309 caps caching at 24 hours)." },
   { key: "confidence_recency_floor", value: 0.4, origin: "documented", description: "Recency factor at twice the refresh window (Phase 0 'Confidence')." },
 ];
 

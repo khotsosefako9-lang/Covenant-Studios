@@ -60,18 +60,24 @@ export const retrievalMethod = pgEnum("retrieval_method", [
 ]);
 
 // SOURCE_BLOCKED states are valid results, not errors to retry around.
+// Fetch outcomes are data states, not errors. SOURCE_BLOCKED (robots disallow) is never
+// retried; BLOCKED_BY_SERVER covers 403 and 429. HTTP_ERROR is any other non-2xx status
+// (404, 5xx after retries); NOT_APPLICABLE is for non-network sources such as a CSV.
 export const fetchOutcome = pgEnum("fetch_outcome", [
-  "ok",
-  "blocked_by_robots",
-  "http_forbidden",
-  "http_error",
-  "timeout",
-  "network_error",
-  "tls_error",
-  "too_large",
-  "redirect_loop",
-  "not_applicable",
+  "OK",
+  "SOURCE_BLOCKED",
+  "BLOCKED_BY_SERVER",
+  "HTTP_ERROR",
+  "TIMEOUT",
+  "UNREACHABLE",
+  "TLS_ERROR",
+  "TOO_LARGE",
+  "REDIRECT_LOOP",
+  "NOT_APPLICABLE",
+  "UNSUPPORTED_CONTENT_TYPE",
 ]);
+
+export const fetchPurpose = pgEnum("fetch_purpose", ["robots", "page"]);
 
 // --- Audits ---------------------------------------------------------------
 

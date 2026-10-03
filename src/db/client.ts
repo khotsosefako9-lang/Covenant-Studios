@@ -9,7 +9,13 @@ let pool: Pool | undefined;
 let db: NodePgDatabase<typeof schema> | undefined;
 
 export function getPool(): Pool {
-  pool ??= new Pool({ connectionString: loadEnv().DATABASE_URL });
+  if (!pool) {
+    pool = new Pool({ connectionString: loadEnv().DATABASE_URL });
+    // An idle client can be terminated by the server (restart, failover). pg emits that on
+    // the pool; without a listener it is an uncaught exception that kills the process.
+    // The client is discarded and the next query opens a fresh one.
+    pool.on("error", (err) => console.error("postgres idle client error:", err.message));
+  }
   return pool;
 }
 

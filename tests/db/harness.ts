@@ -12,10 +12,13 @@ export async function createTestDb() {
   if (!adminUrl) throw new Error("DATABASE_URL is required for database tests");
   const name = `covenant_test_${process.pid}_${Date.now()}`;
   const admin = new Pool({ connectionString: adminUrl, max: 1 });
+  admin.on("error", () => {});
   await admin.query(`create database ${name}`);
   const url = new URL(adminUrl);
   url.pathname = `/${name}`;
   const pool = new Pool({ connectionString: url.toString(), max: 4 });
+  // The database is force-dropped at teardown; an idle client may hear about it first.
+  pool.on("error", () => {});
   const db = drizzle(pool, { schema });
   await migrate(db, { migrationsFolder: "drizzle" });
   await seed(db);

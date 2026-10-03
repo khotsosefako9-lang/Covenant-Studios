@@ -76,7 +76,7 @@ describe.skipIf(!adminUrl)("M0 schema against real PostgreSQL", () => {
       const tables = await q<{ table_name: string }>(
         `select table_name from information_schema.tables where table_schema = 'public' and table_type = 'BASE TABLE'`,
       );
-      expect(tables).toHaveLength(48);
+      expect(tables).toHaveLength(51);
       const names = tables.map((t) => t.table_name);
       for (const t of ["companies", "evidence", "source_records", "audits", "audit_findings", "signals", "opportunities", "scores", "judgements", "weight_sets", "benchmark_cases"]) {
         expect(names).toContain(t);
@@ -158,6 +158,73 @@ describe.skipIf(!adminUrl)("M0 schema against real PostgreSQL", () => {
       expect(byKey.commercial_potential_floor_zar).toMatchObject({ value: 3500, config_origin: "default" });
       expect(byKey.ai_monthly_cap_zar).toMatchObject({ value: 500, config_origin: "default" });
       expect(byKey.ai_monthly_cap_usd).toBeUndefined();
+    });
+
+    it("matches the Capabilities Guide price transcription exactly", async () => {
+      // Transcription supplied with the Phase 4 authorization: [low, high, monthly].
+      const transcription: Record<string, [number | null, number | null, boolean]> = {
+        "Campaign Conversion Page": [3500, null, false],
+        "Custom Business Website": [5500, null, false],
+        "Full Revenue Business Site": [10000, null, false],
+        "Sports Platform Build": [45000, 65000, false],
+        "Bespoke Logo Mark": [1200, null, false],
+        "Full Brand Identity System": [3500, null, false],
+        "Collateral & Print Asset Add-On": [250, null, false],
+        "High-Reach Reels & Short Video": [1000, 3000, false],
+        "Core Content Pack": [2000, null, true],
+        "Growth Content System": [3000, null, true],
+        "Matchday SLA Retainer": [8000, 12500, true],
+        "Web & Technical Delegation": [450, 950, true],
+        "Complete Business Launchpad": [15000, 15000, false],
+        "Onsite Revenue Leak Audit": [null, null, false],
+        "Key Account Outreach Architecture": [null, null, false],
+        "Enterprise Growth Retainer": [null, null, true],
+      };
+      const rows = await q<{ name: string; price_low_zar: number | null; price_high_zar: number | null; billing_period: string; published: boolean }>(
+        `select name, price_low_zar, price_high_zar, billing_period, published from covenant_services`,
+      );
+      expect(rows).toHaveLength(Object.keys(transcription).length);
+      for (const r of rows) {
+        const t = transcription[r.name];
+        expect(t, r.name).toBeDefined();
+        expect([r.price_low_zar, r.price_high_zar, r.billing_period === "monthly"], r.name).toEqual(t);
+        expect(r.published, r.name).toBe(t?.[0] !== null);
+      }
+    });
+
+    it("records delivery terms and the commercial-potential floor's definition", async () => {
+      const rows = await q<{ key: string; value: unknown; description: string }>(
+        `select key, value, description from settings where key in ('delivery_cycle_weeks', 'quote_policy', 'deposit_percent', 'post_launch_warranty_days', 'commercial_potential_floor_zar')`,
+      );
+      const byKey = Object.fromEntries(rows.map((r) => [r.key, r]));
+      expect(byKey.delivery_cycle_weeks?.value).toEqual({ min: 2, max: 4 });
+      expect(byKey.quote_policy?.value).toBe("fixed_locked_at_signoff");
+      expect(byKey.deposit_percent?.value).toBe(50);
+      expect(byKey.post_launch_warranty_days?.value).toBe(30);
+      expect(byKey.commercial_potential_floor_zar?.value).toBe(3500);
+      expect(byKey.commercial_potential_floor_zar?.description).toContain("initial_value");
+      expect(byKey.commercial_potential_floor_zar?.description).toContain("not entry points");
+    });
+
+    it("seeds the 13 controlled reason codes and retires the earlier ones", async () => {
+      const active = await q<{ key: string }>(`select key from judgement_reasons where active order by sort_order`);
+      expect(active.map((r) => r.key)).toEqual([
+        "strong_commercial_opportunity",
+        "strong_service_fit",
+        "strong_digital_opportunity",
+        "strong_buying_signal",
+        "too_small",
+        "insufficient_budget_evidence",
+        "weak_intent",
+        "wrong_industry",
+        "poor_service_fit",
+        "already_well_served",
+        "no_urgency",
+        "insufficient_evidence",
+        "other",
+      ]);
+      const retired = await q<{ key: string }>(`select key from judgement_reasons where not active order by key`);
+      expect(retired.map((r) => r.key)).toEqual(["good_service_fit", "no_obvious_budget", "poor_digital_presence"]);
     });
 
     it("assigns every service to a capabilities-guide category", async () => {
@@ -536,10 +603,11 @@ describe.skipIf(!adminUrl)("M0 schema against real PostgreSQL", () => {
           `insert into judgements (lead_id, context, score_id, verdict, reason_code, actor) values ($1, 'review', $2, 'NO', $3, 'operator')`,
           [l, s, reason],
         );
-      await rejects(judge("not_a_reason"), PG.foreignKey);
+      await rejects(judge("not_a_reason"), PG.check);
       await pool.query(`insert into judgement_reasons (key, label, config_origin) values ('channel_unsuitable', 'Channel unsuitable', 'operator')`);
       await judge("channel_unsuitable");
       await rejects(judge("other"), PG.check, "judgements_other_has_notes");
+      await rejects(judge("good_service_fit"), PG.check);
     });
 
     it("ties a review judgement to a score of the same lead", async () => {
@@ -548,7 +616,7 @@ describe.skipIf(!adminUrl)("M0 schema against real PostgreSQL", () => {
       const s2 = await score(l2);
       const judge = (leadId: string, scoreId: string | null, context = "review") =>
         pool.query(
-          `insert into judgements (lead_id, context, score_id, verdict, reason_code, actor) values ($1, $2, $3, 'YES', 'good_service_fit', 'operator') returning id`,
+          `insert into judgements (lead_id, context, score_id, verdict, reason_code, actor) values ($1, $2, $3, 'YES', 'strong_service_fit', 'operator') returning id`,
           [leadId, context, scoreId],
         );
       await rejects(judge(l1, null), PG.check, "judgements_review_has_score");
@@ -573,7 +641,7 @@ describe.skipIf(!adminUrl)("M0 schema against real PostgreSQL", () => {
       ).id;
       const review = (
         await one<{ id: string }>(
-          `insert into judgements (lead_id, context, score_id, verdict, reason_code, actor) values ($1, 'review', $2, 'YES', 'good_service_fit', 'operator') returning id`,
+          `insert into judgements (lead_id, context, score_id, verdict, reason_code, actor) values ($1, 'review', $2, 'YES', 'strong_service_fit', 'operator') returning id`,
           [l, s],
         )
       ).id;

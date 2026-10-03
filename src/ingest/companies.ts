@@ -52,6 +52,7 @@ export type ManualEntryResult =
 
 interface Context {
   profiles: IdentityProfile[];
+  /** Domain → active root company, including domains of companies merged into it. */
   byDomain: Map<string, string>;
   nameThreshold: number;
 }
@@ -82,6 +83,13 @@ async function loadContext(tx: Tx): Promise<Context> {
     if (p) (ch.kind === "phone" ? p.phones : p.emails).push(ch.value);
   }
   const byDomain = new Map<string, string>();
+  // A merged company's domain still identifies the business: it resolves to the cluster root.
+  const merged = await tx
+    .select({ domain: s.companies.domain, rootId: s.companyRoots.rootId })
+    .from(s.companies)
+    .innerJoin(s.companyRoots, eq(s.companyRoots.companyId, s.companies.id))
+    .where(eq(s.companies.status, "merged"));
+  for (const m of merged) if (m.domain) byDomain.set(m.domain, m.rootId);
   for (const c of companies) if (c.domain) byDomain.set(c.domain, c.id);
   return { profiles: [...profiles.values()], byDomain, nameThreshold };
 }
@@ -177,6 +185,8 @@ async function createCompany(
     profile.emails.push(company.email.normalised);
   }
 
+  // Only pairs involving this new company are proposed, so a recorded non-match (always
+  // between existing companies) cannot recur here; the database trigger guards all inserts.
   const candidates = findDuplicateCandidates(profile, ctx.profiles, ctx.nameThreshold);
   if (candidates.length) {
     await tx

@@ -44,7 +44,7 @@ weights, intent gate and benchmark dataset. Schema code lives in `src/db/schema/
 
 | Layer | Tables |
 | --- | --- |
-| Identity | `companies`, `company_aliases`, `company_duplicate_candidates`, `contacts`, `contact_channels` |
+| Identity | `companies`, `company_aliases`, `company_duplicate_candidates`, `company_merges`, `company_non_matches`, `duplicate_resolutions`, `contacts`, `contact_channels`, view `company_roots` |
 | Observed facts | `sources`, `source_records` (one retrieval each: page, robots.txt, CSV, operator statement) |
 | Evidence | `evidence`, view `evidence_provenance` |
 | Deterministic audit | `audits`, `audit_findings`, `audit_finding_evidence`, `finding_verifications` |
@@ -186,6 +186,61 @@ npm run company:add -- --name "Acme Supplies (Pty) Ltd" --website acme.co.za --p
   legal name, trading name, industry/sector, location/city/town/area, phone/telephone/tel,
   email/e-mail. Other columns are reported as ignored.
 
+## Phase 4 — identity resolution
+
+A human resolves every proposed duplicate. Each decision records actor, timestamp and a required
+reason in the append-only `duplicate_resolutions` table.
+
+| Action | Effect |
+| --- | --- |
+| Confirm | Merges the pair, keeping the company the operator names (`--keep`). Every other open candidate for the same pair is resolved with it |
+| Reject | Records a permanent `company_non_matches` row. A trigger blocks any future candidate for that pair, on any basis |
+| Defer | Parks the candidate as `deferred`. It can still be confirmed or rejected later |
+| Unmerge | Reverses a merge. The `company_merges` row is kept and marked unmerged, and the candidates it confirmed return to `proposed` |
+
+**A merge moves nothing.** The loser keeps every source record, evidence row, audit, finding, signal,
+opportunity, lead and score it owns, with its original `company_id`. It only gains
+`status = merged` and `merged_into_id = <winner>`. The loser's display name, legal and trading names
+(as `merged_identity`) and its domain (as `merged_domain`) become aliases of the winner, tagged with
+the merge's id.
+
+Reads that want everything about a business go through the `company_roots` view, which maps every
+company to the active root of its cluster. Because nothing moved, the immutable evidence and score
+triggers never come into play, every provenance chain stays as it was, and unmerge is exact: it deletes
+the merge-tagged aliases and flips the loser back to active. The tests snapshot every other table
+before a merge, after it and after the unmerge, and assert they are identical.
+
+Guards:
+- Only two active companies can be merged; a trigger also refuses a merge into a non-active company,
+  so cycles are impossible.
+- An unmerge is refused if the loser's domain has meanwhile been taken by another active company.
+- Import resolves a merged company's domain to its cluster root, so a later CSV row cannot recreate
+  the merged identity as a new company.
+- Alias uniqueness is on the exact value, so names that differ only by legal form are both kept.
+
+```sh
+npm run duplicates -- list [--status proposed|deferred|confirmed_duplicate|rejected]
+npm run duplicates -- confirm <candidateId> --keep <companyId> --by "Khotso" --reason "Same supplier, typo"
+npm run duplicates -- reject  <candidateId> --by "Khotso" --reason "Separate businesses"
+npm run duplicates -- defer   <candidateId> --by "Khotso" --reason "Need to call them"
+npm run duplicates -- unmerge <mergeId>     --by "Khotso" --reason "Wrong merge"
+npm run duplicates -- show    <companyId>
+```
+
+### Phase 4 configuration corrections
+
+- **Reason codes** are the controlled list of 13 from Phase 0. The earlier codes `good_service_fit`,
+  `poor_digital_presence` and `no_obvious_budget` are retired (`active = false`), not deleted. A trigger
+  stops new judgements from using a retired code.
+- **`commercial_potential_floor_zar` = 3500** applies to `initial_value`: the lowest published
+  full-project entry price. Add-ons (from R250) and retainers (from R450/mo) are not entry points. The
+  definition is stored in the setting's description so it is not re-derived. Seeded descriptions
+  follow the code unless an operator has edited the row.
+- **Delivery terms** are settings, `documented`: 2–4 week cycles, fixed quotes locked at sign-off, 50%
+  deposit, 30-day post-launch warranty.
+- **Prices** match the transcription supplied with the Phase 4 authorization exactly, and a test now
+  pins them.
+
 ## Running locally
 
 Requires Node 22.12+ and PostgreSQL.
@@ -212,4 +267,6 @@ and target phase, and are not built in M0.
 | Users and roles tables | M0 actor columns are plain text; admin/operator auth is not in the build list | Auth decision | Access control | M1 |
 | `evidence_derivations` (links an `INFERRED` evidence row to the evidence it was reasoned from) | Dropped in Phase 3: no M0 component writes `INFERRED` evidence rows | A layer that writes inferred facts, e.g. AI industry classification | Full inference chains for inferred company facts | M1 |
 | Operator UI for manual entry, CSV upload and duplicate resolution | No authentication yet; the CLI covers M0 operation | Auth, lead review UI | Operator workflow without a terminal | Phase 12 / M1 |
+| CSV enrichment of an existing company | An exact domain match writes nothing, so a CSV cannot add evidence to a company that already exists | A rule for attributing new REPORTED evidence to an existing identity | Keeping records current from repeat imports | M4 |
+| Lead reconciliation on merge | A merge leaves each company's leads where they are, so a cluster can hold two open leads | Lead state machine (Phases 10–11) | One pursuit per business | Phase 10 |
 | `is_demo` production insert guard | Needs the deployment environment decided | Deployment | Test-data isolation | Deployment |

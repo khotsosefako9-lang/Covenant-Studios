@@ -2,7 +2,7 @@
 // null; never overwrites a value, and never touches a row an operator has edited
 // (config_origin = 'operator').
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { and, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne, notInArray, or, sql } from "drizzle-orm";
 import * as s from "./schema/index";
 import * as data from "./seed-data";
 import { parseSetting } from "./validation";
@@ -44,6 +44,22 @@ export async function seed(db: Db): Promise<void> {
       .insert(s.judgementReasons)
       .values(data.judgementReasons)
       .onConflictDoNothing({ target: s.judgementReasons.key });
+    // Retire codes that are no longer in the controlled list (kept for existing judgements).
+    await tx
+      .update(s.judgementReasons)
+      .set({ active: false })
+      .where(
+        and(
+          notInArray(s.judgementReasons.key, data.judgementReasons.map((r) => r.key)),
+          ne(s.judgementReasons.configOrigin, "operator"),
+        ),
+      );
+    for (const r of data.judgementReasons) {
+      await tx
+        .update(s.judgementReasons)
+        .set({ label: r.label, sortOrder: r.sortOrder, active: true })
+        .where(and(eq(s.judgementReasons.key, r.key), ne(s.judgementReasons.configOrigin, "operator")));
+    }
 
     await tx
       .insert(s.opportunityTypes)
@@ -148,6 +164,11 @@ export async function seed(db: Db): Promise<void> {
       )
       .onConflictDoNothing({ target: s.settings.key });
     for (const st of data.settings) {
+      // Descriptions document what a value means; they follow the code unless an operator edited the row.
+      await tx
+        .update(s.settings)
+        .set({ description: st.description })
+        .where(and(eq(s.settings.key, st.key), ne(s.settings.configOrigin, "operator")));
       if (st.value === null) continue;
       await tx
         .update(s.settings)

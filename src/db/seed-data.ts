@@ -38,17 +38,22 @@ export const serviceCategories: { key: string; name: string; services: string[] 
   { key: "combined", name: "Combined", services: ["complete_business_launchpad"] },
 ];
 
-// Phase 0 "judgements" reason codes. The handover brief is said to list 13; the copy
-// read for Phase 3 lists none, so only these nine are seeded until the other four are supplied.
+// Judgement reason codes: the controlled list of 13 (Phase 0, supplied with the Phase 4
+// authorization). Earlier codes not in this list are retired (active = false), never
+// deleted, because existing judgements reference them.
 export const judgementReasons: { key: string; label: string; sortOrder: number }[] = [
   { key: "strong_commercial_opportunity", label: "Strong commercial opportunity", sortOrder: 1 },
-  { key: "good_service_fit", label: "Good service fit", sortOrder: 2 },
-  { key: "poor_digital_presence", label: "Poor digital presence", sortOrder: 3 },
-  { key: "too_small", label: "Too small", sortOrder: 4 },
-  { key: "no_obvious_budget", label: "No obvious budget", sortOrder: 5 },
-  { key: "wrong_industry", label: "Wrong industry", sortOrder: 6 },
-  { key: "already_well_served", label: "Already well served", sortOrder: 7 },
-  { key: "no_urgency", label: "No urgency", sortOrder: 8 },
+  { key: "strong_service_fit", label: "Strong service fit", sortOrder: 2 },
+  { key: "strong_digital_opportunity", label: "Strong digital opportunity", sortOrder: 3 },
+  { key: "strong_buying_signal", label: "Strong buying signal", sortOrder: 4 },
+  { key: "too_small", label: "Too small", sortOrder: 5 },
+  { key: "insufficient_budget_evidence", label: "Insufficient budget evidence", sortOrder: 6 },
+  { key: "weak_intent", label: "Weak intent", sortOrder: 7 },
+  { key: "wrong_industry", label: "Wrong industry", sortOrder: 8 },
+  { key: "poor_service_fit", label: "Poor service fit", sortOrder: 9 },
+  { key: "already_well_served", label: "Already well served", sortOrder: 10 },
+  { key: "no_urgency", label: "No urgency", sortOrder: 11 },
+  { key: "insufficient_evidence", label: "Insufficient evidence", sortOrder: 12 },
   { key: "other", label: "Other", sortOrder: 99 },
 ];
 
@@ -293,7 +298,15 @@ export const settings: { key: SettingKey; value: unknown; origin: Origin; descri
   { key: "delivery_slots_total", value: null, origin: "documented", description: "New projects Covenant can start per cycle. NOT_CONFIGURED until supplied." },
   { key: "qualify_score_threshold", value: 55, origin: "default", description: "Minimum score for qualification." },
   { key: "qualify_confidence_threshold", value: 0.6, origin: "default", description: "Minimum confidence for qualification, set independently of score." },
-  { key: "commercial_potential_floor_zar", value: 3500, origin: "default", description: "Commercial-potential floor (rand) that can pass the intent gate." },
+  {
+    key: "commercial_potential_floor_zar",
+    value: 3500,
+    origin: "default",
+    description:
+      "Floor on initial_value (the published entry price of the mapped service) that can pass the intent gate. " +
+      "Set at the lowest published full-project entry price, R3,500 (Campaign Conversion Page, Full Brand Identity System). " +
+      "Add-ons (from R250) and retainers (from R450/mo) are not entry points and are excluded; it is not the lowest price of anything.",
+  },
   { key: "conversation_worthiness_bar", value: null, origin: "documented", description: "Deliberately unset: set after the first five audits are judged." },
   { key: "ai_monthly_cap_zar", value: 500, origin: "default", description: "Monthly AI spend cap in rand; hard stop when reached." },
   { key: "ai_per_lead_cap_usd", value: null, origin: "documented", description: "Per-lead AI cost ceiling. NOT_CONFIGURED." },
@@ -311,6 +324,10 @@ export const settings: { key: SettingKey; value: unknown; origin: Origin; descri
     origin: "documented",
     description: "Verifiability factor per claim type (Phase 0 'Confidence').",
   },
+  { key: "delivery_cycle_weeks", value: { min: 2, max: 4 }, origin: "documented", description: "Delivery cycle length (Capabilities Guide delivery terms)." },
+  { key: "quote_policy", value: "fixed_locked_at_signoff", origin: "documented", description: "Quotes are fixed and locked at sign-off (Capabilities Guide delivery terms)." },
+  { key: "deposit_percent", value: 50, origin: "documented", description: "Deposit required before work starts (Capabilities Guide delivery terms)." },
+  { key: "post_launch_warranty_days", value: 30, origin: "documented", description: "Post-launch warranty period (Capabilities Guide delivery terms)." },
   { key: "confidence_recency_floor", value: 0.4, origin: "documented", description: "Recency factor at twice the refresh window (Phase 0 'Confidence')." },
 ];
 

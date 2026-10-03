@@ -19,6 +19,7 @@ export const companyAliasKind = pgEnum("company_alias_kind", [
   "former_name",
   "former_domain",
   "merged_identity",
+  "merged_domain",
 ]);
 
 export const duplicateMatchBasis = pgEnum("duplicate_match_basis", [
@@ -28,12 +29,15 @@ export const duplicateMatchBasis = pgEnum("duplicate_match_basis", [
   "email",
 ]);
 
-// Name similarity only ever proposes; a human confirms or rejects.
+// Name similarity only ever proposes; a human confirms, rejects or defers.
 export const duplicateCandidateStatus = pgEnum("duplicate_candidate_status", [
   "proposed",
   "confirmed_duplicate",
   "rejected",
+  "deferred",
 ]);
+
+export const duplicateResolutionAction = pgEnum("duplicate_resolution_action", ["confirm", "reject", "defer", "unmerge"]);
 
 export const channelKind = pgEnum("channel_kind", ["email", "phone", "whatsapp", "profile_url"]);
 

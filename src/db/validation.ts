@@ -32,6 +32,13 @@ export const settingSchemas = {
     .strict(),
   confidence_verifiability: z.object({ VERIFIED: unit, INFERRED: unit, REPORTED: unit, UNKNOWN: unit }).strict(),
   confidence_recency_floor: unit,
+  delivery_cycle_weeks: z
+    .object({ min: z.number().int().positive(), max: z.number().int().positive() })
+    .strict()
+    .refine((v) => v.max >= v.min, "max must be at least min"),
+  quote_policy: z.enum(["fixed_locked_at_signoff"]),
+  deposit_percent: z.number().min(0).max(100),
+  post_launch_warranty_days: z.number().int().nonnegative(),
 } as const;
 
 export type SettingKey = keyof typeof settingSchemas;

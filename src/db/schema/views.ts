@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgView, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { integer, pgView, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { claimType, evidenceProducer, retrievalMethod } from "./enums";
 
 // Every evidence row with the provenance a reader needs: source URL, retrieval time,
@@ -26,4 +26,23 @@ export const evidenceProvenance = pgView("evidence_provenance", {
          sr.retrieval_method, sr.attributed_to
   from evidence e
   join source_records sr on sr.id = e.source_record_id
+`);
+
+// Every company with the root of its identity cluster: itself when active, otherwise the
+// active company its merge chain ends at. Reads that want "everything about this
+// business" go through this instead of companies.id.
+export const companyRoots = pgView("company_roots", {
+  companyId: uuid("company_id").notNull(),
+  rootId: uuid("root_id").notNull(),
+  depth: integer("depth").notNull(),
+}).as(sql`
+  with recursive chain (company_id, current_id, depth) as (
+    select id, id, 0 from companies
+    union all
+    select chain.company_id, c.merged_into_id, chain.depth + 1
+    from chain join companies c on c.id = chain.current_id
+    where c.merged_into_id is not null and chain.depth < 50
+  )
+  select distinct on (company_id) company_id, current_id as root_id, depth
+  from chain order by company_id, depth desc
 `);

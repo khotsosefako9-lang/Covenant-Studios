@@ -17,7 +17,8 @@
     "db:migrate": "drizzle-kit migrate",
     "db:setup": "tsx src/db/cli.ts",
     "import:csv": "tsx src/cli/import-csv.ts",
-    "company:add": "tsx src/cli/add-company.ts"
+    "company:add": "tsx src/cli/add-company.ts",
+    "duplicates": "tsx src/cli/duplicates.ts"
   },
   "dependencies": {
     "cheerio": "^1.2.0",

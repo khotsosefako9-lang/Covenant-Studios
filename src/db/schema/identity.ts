@@ -10,6 +10,7 @@ import {
   companyStatus,
   duplicateCandidateStatus,
   duplicateMatchBasis,
+  duplicateResolutionAction,
 } from "./enums";
 import { evidence } from "./provenance";
 
@@ -54,10 +55,13 @@ export const companyAliases = pgTable(
     kind: companyAliasKind("kind").notNull(),
     value: text("value").notNull(),
     normalisedValue: text("normalised_value").notNull(),
+    // Set when the alias was carried over by a merge; an unmerge removes exactly these.
+    mergeId: uuid("merge_id").references((): AnyPgColumn => companyMerges.id, { onDelete: "cascade" }),
     ...timestamps(),
   },
   (t) => [
-    uniqueIndex("company_aliases_unique").on(t.companyId, t.kind, t.normalisedValue),
+    // Exact values are unique, so names that differ only in legal form are both kept.
+    uniqueIndex("company_aliases_unique").on(t.companyId, t.kind, t.value),
     index("company_aliases_normalised").on(t.normalisedValue),
   ],
 );
@@ -135,5 +139,90 @@ export const contactChannels = pgTable(
   (t) => [
     uniqueIndex("contact_channels_unique").on(t.companyId, t.kind, t.normalisedValue),
     index("contact_channels_lookup").on(t.kind, t.normalisedValue),
+  ],
+);
+
+// A confirmed merge. Nothing moves: the loser keeps every row it owns and points at the
+// winner through companies.merged_into_id, so an unmerge only has to flip it back.
+export const companyMerges = pgTable(
+  "company_merges",
+  {
+    id: id(),
+    candidateId: uuid("candidate_id")
+      .notNull()
+      .references(() => companyDuplicateCandidates.id, { onDelete: "restrict" }),
+    winnerId: uuid("winner_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "restrict" }),
+    loserId: uuid("loser_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "restrict" }),
+    mergedBy: text("merged_by").notNull(),
+    reason: text("reason").notNull(),
+    mergedAt: tstz("merged_at").notNull().defaultNow(),
+    unmergedBy: text("unmerged_by"),
+    unmergeReason: text("unmerge_reason"),
+    unmergedAt: tstz("unmerged_at"),
+    ...timestamps(),
+  },
+  (t) => [
+    uniqueIndex("company_merges_one_active_per_loser").on(t.loserId).where(sql`${t.unmergedAt} is null`),
+    index("company_merges_winner").on(t.winnerId),
+    check("company_merges_distinct", sql`${t.winnerId} <> ${t.loserId}`),
+    check(
+      "company_merges_unmerge_complete",
+      sql`(${t.unmergedAt} is null) = (${t.unmergedBy} is null) and (${t.unmergedAt} is null) = (${t.unmergeReason} is null)`,
+    ),
+    check("company_merges_reason", sql`length(trim(${t.reason})) > 0`),
+  ],
+);
+
+// A permanent human decision that two companies are not the same business.
+// No duplicate candidate may be proposed for this pair again (enforced by trigger).
+export const companyNonMatches = pgTable(
+  "company_non_matches",
+  {
+    id: id(),
+    companyAId: uuid("company_a_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    companyBId: uuid("company_b_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    candidateId: uuid("candidate_id").references(() => companyDuplicateCandidates.id, { onDelete: "set null" }),
+    decidedBy: text("decided_by").notNull(),
+    reason: text("reason").notNull(),
+    decidedAt: tstz("decided_at").notNull().defaultNow(),
+    ...timestamps(),
+  },
+  (t) => [
+    uniqueIndex("company_non_matches_pair").on(t.companyAId, t.companyBId),
+    check("company_non_matches_ordered", sql`${t.companyAId} < ${t.companyBId}`),
+    check("company_non_matches_reason", sql`length(trim(${t.reason})) > 0`),
+  ],
+);
+
+// Append-only history of every decision on a duplicate candidate.
+export const duplicateResolutions = pgTable(
+  "duplicate_resolutions",
+  {
+    id: id(),
+    candidateId: uuid("candidate_id")
+      .notNull()
+      .references(() => companyDuplicateCandidates.id, { onDelete: "cascade" }),
+    action: duplicateResolutionAction("action").notNull(),
+    actor: text("actor").notNull(),
+    reason: text("reason").notNull(),
+    actedAt: tstz("acted_at").notNull().defaultNow(),
+    mergeId: uuid("merge_id").references(() => companyMerges.id, { onDelete: "restrict" }),
+    ...timestamps(),
+  },
+  (t) => [
+    index("duplicate_resolutions_candidate").on(t.candidateId, t.actedAt),
+    check("duplicate_resolutions_reason", sql`length(trim(${t.reason})) > 0 and length(trim(${t.actor})) > 0`),
+    check(
+      "duplicate_resolutions_merge_link",
+      sql`(${t.action} in ('confirm', 'unmerge')) = (${t.mergeId} is not null)`,
+    ),
   ],
 );

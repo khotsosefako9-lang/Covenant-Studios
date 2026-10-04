@@ -103,13 +103,14 @@ export const technicalChecks: CheckDefinition[] = [
     category: "technical",
     severity: "low",
     version: V,
-    description: "Size of the HTML document alone (not images, scripts or styles, which are not downloaded); FAIL above 1 MB.",
+    description: "Size of the HTML document alone (not images, scripts or styles, which are not downloaded); FAIL above max_html_bytes (default 1 MB).",
     evidenceRecorded: "HTML byte size and counts of referenced scripts, stylesheets and images.",
-    run({ doc }) {
+    params: { max_html_bytes: { default: 1_000_000, min: 200_000, max: 10_000_000, integer: true, description: "FAIL when the HTML document is larger than this many bytes" } },
+    run({ doc }, p) {
       const bytes = Buffer.byteLength(doc.html, "utf8");
       const counts = `${doc.$("script[src]").length} scripts, ${doc.$("link[rel~='stylesheet' i]").length} stylesheets, ${doc.$("img").length} images referenced`;
       const ev = { claim: "HTML document size", value: `${bytes} bytes`, excerpt: counts, locator: "document" };
-      if (bytes > 1_000_000) return fail(`The HTML document alone is ${(bytes / 1_000_000).toFixed(1)} MB`, 0.95, [ev]);
+      if (bytes > (p.max_html_bytes as number)) return fail(`The HTML document alone is ${(bytes / 1_000_000).toFixed(1)} MB`, 0.95, [ev]);
       return pass(`HTML document is ${Math.round(bytes / 1024)} KB`, 0.95, [ev]);
     },
   },
@@ -119,12 +120,13 @@ export const technicalChecks: CheckDefinition[] = [
     category: "technical",
     severity: "low",
     version: V,
-    description: "Time to response headers, one measurement from the audit server; FAIL above 3 seconds.",
+    description: "Time to response headers, one measurement from the audit server; FAIL above max_response_ms (default 3 seconds).",
     evidenceRecorded: "Measured milliseconds to response headers.",
-    run(ctx) {
+    params: { max_response_ms: { default: 3000, min: 1000, max: 30_000, integer: true, description: "FAIL when the response headers took longer than this many milliseconds" } },
+    run(ctx, p) {
       if (ctx.responseMs === null) return indeterminate("No timing was recorded for this retrieval");
       const ev = { claim: "Time to response headers, measured once from the audit server", value: `${ctx.responseMs} ms`, locator: `GET ${ctx.doc.url}`, sourceRecordId: ctx.pageSourceRecordId };
-      if (ctx.responseMs > 3000) return fail(`The server took ${(ctx.responseMs / 1000).toFixed(1)} s to respond (one measurement)`, 0.5, [ev]);
+      if (ctx.responseMs > (p.max_response_ms as number)) return fail(`The server took ${(ctx.responseMs / 1000).toFixed(1)} s to respond (one measurement)`, 0.5, [ev]);
       return pass(`The server responded in ${ctx.responseMs} ms`, 0.6, [ev]);
     },
   },

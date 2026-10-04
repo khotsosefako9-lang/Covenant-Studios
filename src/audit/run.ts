@@ -7,7 +7,7 @@ import { inCompanyCluster } from "@/db/company-scope";
 import * as s from "@/db/schema/index";
 import type { FetchResult, FetchRun } from "@/fetch/fetcher";
 import { parseDocument } from "./document";
-import { CHECK_SET_VERSION, evaluate, planProbes, sitemapsFromRobots } from "./registry";
+import { CHECK_SET_VERSION, evaluate, planProbes, resolveCheckParams, sitemapsFromRobots } from "./registry";
 import { triage } from "./shell";
 import type { AuditContext, Probe } from "./types";
 
@@ -175,10 +175,12 @@ export async function runAudit(
       social: await probeAll(plan.social),
     };
 
-    const enabled = new Set(
-      (await db.select({ key: s.auditChecks.key }).from(s.auditChecks).where(eq(s.auditChecks.enabled, true))).map((r) => r.key),
-    );
-    const results = evaluate(ctx, enabled);
+    const checkRows = await db.select({ key: s.auditChecks.key, enabled: s.auditChecks.enabled, params: s.auditChecks.params }).from(s.auditChecks);
+    const enabled = new Set(checkRows.filter((r) => r.enabled).map((r) => r.key));
+    // Thresholds come from the audit_checks rows; an invalid row fails the audit rather than
+    // silently running on a default the operator did not choose.
+    const params = resolveCheckParams(Object.fromEntries(checkRows.map((r) => [r.key, r.params])));
+    const results = evaluate(ctx, enabled, params);
 
     // Each claim is observed when the retrieval it cites happened: a probe made after the
     // homepage must not be stamped with the homepage's time.
@@ -229,7 +231,8 @@ export async function runAudit(
           if (ev) await tx.insert(s.auditFindingEvidence).values({ auditFindingId: finding.id, evidenceId: ev.id }).onConflictDoNothing();
         }
       }
-      await tx.update(s.audits).set({ status: "COMPLETED", pageSourceRecordId: page.id, completedAt: new Date() }).where(eq(s.audits.id, audit.id));
+      const used = Object.fromEntries(Object.entries(params).filter(([key, v]) => enabled.has(key) && Object.keys(v).length));
+      await tx.update(s.audits).set({ status: "COMPLETED", pageSourceRecordId: page.id, checkParams: used, completedAt: new Date() }).where(eq(s.audits.id, audit.id));
     });
     return { auditId: audit.id, status: "COMPLETED", findings: results.length };
   } catch (e) {

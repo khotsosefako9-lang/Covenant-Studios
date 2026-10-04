@@ -3,7 +3,8 @@
 import { describe, expect, it } from "vitest";
 import { evaluate } from "@/audit/registry";
 import { signalTypes as seededTypes } from "@/db/seed-data";
-import { type AuditSnapshot, DETECTORS, MIN_FINDING_CONFIDENCE, NOT_AUTOMATED, detectAll } from "@/signals/detectors";
+import { ParamsError } from "@/core/params";
+import { type AuditSnapshot, DETECTORS, MIN_FINDING_CONFIDENCE, NOT_AUTOMATED, detectAll, resolveDetectorParams } from "@/signals/detectors";
 import { ctxFor, fixture, probe } from "../audit/helpers";
 
 const INTENT_TYPES = new Set(seededTypes.filter((t) => t.axis === "intent").map((t) => t.key));
@@ -131,5 +132,51 @@ describe("coverage and human-only types", () => {
 
   it("has no automated Intent detector in M0: every intent signal comes from an operator", () => {
     expect(DETECTORS.map((d) => d.typeKey).filter((k) => INTENT_TYPES.has(k))).toEqual([]);
+  });
+});
+
+describe("capacity is never a signal", () => {
+  it("PRESENT capacity findings, however many, produce no signal", () => {
+    const keys = ["capacity.careers_page", "capacity.multiple_locations", "capacity.online_shop", "capacity.client_logo_wall", "capacity.sponsor_section", "capacity.accreditation"];
+    const s: AuditSnapshot = {
+      auditId: "a",
+      companyId: "c",
+      declaredLength: {},
+      findings: keys.map((k) => ({ id: k, checkKey: k, status: "PRESENT", severity: null, confidence: 0.9, evidenceIds: [`${k}#0`] })),
+    };
+    expect(detectAll(s)).toEqual([]);
+  });
+});
+
+describe("detector parameters are configuration", () => {
+  const one = (checkKey: string, severity = "medium"): AuditSnapshot => ({
+    auditId: "a",
+    companyId: "c",
+    declaredLength: {},
+    findings: [{ id: checkKey, checkKey, status: "FAIL", severity, confidence: 0.85, evidenceIds: [`${checkKey}#0`] }],
+  });
+
+  it("runs on the code defaults when nothing is stored", () => {
+    const [c] = detectAll(one("tech.viewport_meta"));
+    expect(c).toMatchObject({ typeKey: "web_underperformance", strength: 0.45 });
+  });
+
+  it("uses stored values over the defaults", () => {
+    const params = resolveDetectorParams({ web_underperformance: { base: 0.2, per_medium: 0.1 }, mobile_commercial_friction: { strength: 0.5 } });
+    const byType = Object.fromEntries(detectAll(one("tech.viewport_meta"), params).map((c) => [c.typeKey, c.strength]));
+    expect(byType).toEqual({ web_underperformance: 0.3, mobile_commercial_friction: 0.5 });
+  });
+
+  it("rejects an unknown key or a value outside its bounds rather than guessing", () => {
+    expect(() => resolveDetectorParams({ web_underperformance: { bsae: 0.2 } })).toThrow(ParamsError);
+    expect(() => resolveDetectorParams({ web_underperformance: { base: 1.5 } })).toThrow(/web_underperformance/);
+    expect(() => resolveDetectorParams({ mobile_commercial_friction: { min_finding_confidence: 0.2 } })).toThrow(ParamsError);
+  });
+
+  it("declares every constant it uses, with a default inside its bounds", () => {
+    for (const d of DETECTORS) {
+      expect(Object.keys(d.params)).toEqual(expect.arrayContaining(["min_finding_confidence", "max_strength"]));
+      for (const [k, v] of Object.entries(d.params)) expect(v.default >= v.min && v.default <= v.max, `${d.typeKey}.${k}`).toBe(true);
+    }
   });
 });

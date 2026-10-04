@@ -57,6 +57,13 @@
       "when": 1791124333048,
       "tag": "0007_phase8_signals",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1791140354368,
+      "tag": "0008_phase9_capacity_opportunities",
+      "breakpoints": true
     }
   ]
 }

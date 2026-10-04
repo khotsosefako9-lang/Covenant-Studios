@@ -51,6 +51,14 @@ export const settingSchemas = {
   fetch_host_budget_per_run: z.number().int().min(1).max(200),
   fetch_cache_ttl_hours: z.number().min(0),
   robots_cache_ttl_hours: z.number().min(0).max(24),
+  // Opportunity derivation (Phase 9).
+  opportunity_derivation: z
+    .object({
+      secondary_mapping_weight: z.number().min(0).max(1),
+      min_relevance: unit,
+      max_opportunities: z.number().int().min(1).max(10),
+    })
+    .strict(),
 } as const;
 
 export type SettingKey = keyof typeof settingSchemas;

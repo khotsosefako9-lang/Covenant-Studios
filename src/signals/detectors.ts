@@ -1,6 +1,7 @@
 // Signal detectors. Pure: each reads a snapshot of one completed audit's findings and the
 // evidence behind them, and either abstains or proposes one signal resting on named
 // findings and evidence. Nothing here reads HTML or calls a model; abstention is the default.
+import { type Params, type ParamSpecs, resolveParams } from "@/core/params";
 
 export interface FindingFact {
   id: string;
@@ -31,87 +32,128 @@ export interface Detector {
   /** The signal type it can produce (signal_types.key). */
   typeKey: string;
   rule: string;
-  detect(s: AuditSnapshot): Candidate | null;
+  /** Strengths and thresholds, configurable per signal type (signal_types.detector_params). */
+  params: ParamSpecs;
+  detect(s: AuditSnapshot, p: Params): Candidate | null;
 }
 
-/** Below this confidence a FAIL is too uncertain to build an interpretation on. */
+/** Default floor below which a FAIL is too uncertain to build an interpretation on. */
 export const MIN_FINDING_CONFIDENCE = 0.6;
 
-const failed = (s: AuditSnapshot, key: string, minConfidence = MIN_FINDING_CONFIDENCE) =>
+const unit = (d: number, description: string) => ({ default: d, min: 0, max: 1, description });
+/** Every detector has these two: the confidence a FAIL needs to count, and the strength cap. */
+const common = (minConfidence = MIN_FINDING_CONFIDENCE) => ({
+  min_finding_confidence: { default: minConfidence, min: 0.5, max: 1, description: "A FAIL below this confidence never contributes" },
+  max_strength: unit(0.9, "Cap on the signal's strength"),
+});
+
+const failed = (s: AuditSnapshot, key: string, minConfidence: number) =>
   s.findings.find((f) => f.checkKey === key && f.status === "FAIL" && f.confidence >= minConfidence && f.evidenceIds.length > 0);
 
 const round = (n: number) => Math.round(n * 1000) / 1000;
 
-function candidate(typeKey: string, strength: number, findings: FindingFact[], rationale: string): Candidate | null {
+function candidate(typeKey: string, strength: number, findings: FindingFact[], rationale: string, p: Params): Candidate | null {
   const evidenceIds = [...new Set(findings.flatMap((f) => f.evidenceIds))];
   if (!evidenceIds.length) return null; // a signal with nothing to cite is not emitted
-  return { typeKey, strength: round(Math.min(0.9, strength)), findingIds: findings.map((f) => f.id), evidenceIds, rationale };
+  return { typeKey, strength: round(Math.min(p.max_strength as number, strength)), findingIds: findings.map((f) => f.id), evidenceIds, rationale };
 }
+
+const n = (p: Params, k: string) => p[k] as number;
 
 export const DETECTORS: Detector[] = [
   {
     typeKey: "web_underperformance",
-    rule: "At least one medium- or high-severity FAIL (confidence ≥ 0.6). Strength 0.3 + 0.15 per medium + 0.25 per high, capped at 0.9.",
-    detect(s) {
+    rule: "At least one medium- or high-severity FAIL (confidence ≥ min_finding_confidence). Strength base + per_medium × mediums + per_high × highs, capped at max_strength. Opportunity axis only, always.",
+    params: {
+      ...common(),
+      base: unit(0.3, "Strength with one qualifying failure before per-failure increments"),
+      per_medium: unit(0.15, "Added per medium-severity failure"),
+      per_high: unit(0.25, "Added per high-severity failure"),
+    },
+    detect(s, p) {
       const fs = s.findings.filter(
-        (f) => f.status === "FAIL" && (f.severity === "medium" || f.severity === "high") && f.confidence >= MIN_FINDING_CONFIDENCE && f.evidenceIds.length,
+        (f) => f.status === "FAIL" && (f.severity === "medium" || f.severity === "high") && f.confidence >= n(p, "min_finding_confidence") && f.evidenceIds.length,
       );
       if (!fs.length) return null;
       const medium = fs.filter((f) => f.severity === "medium").length;
       const high = fs.filter((f) => f.severity === "high").length;
-      return candidate("web_underperformance", 0.3 + 0.15 * medium + 0.25 * high, fs, `${high} high and ${medium} medium audit failures`);
+      return candidate("web_underperformance", n(p, "base") + n(p, "per_medium") * medium + n(p, "per_high") * high, fs, `${high} high and ${medium} medium audit failures`, p);
     },
   },
   {
     typeKey: "catalogue_friction",
-    rule: "content.heavy_catalogue FAILED (a linked PDF over 10 MB). Strength 0.6, 0.8 above 25 MB, 0.9 above 50 MB.",
-    detect(s) {
-      const f = failed(s, "content.heavy_catalogue");
+    rule: "content.heavy_catalogue FAILED (a linked PDF over that check's max_pdf_bytes). Strength base; over_large_mb_strength above large_mb; over_huge_mb_strength above huge_mb.",
+    params: {
+      ...common(),
+      base: unit(0.6, "Strength for any oversized catalogue"),
+      large_mb: { default: 25, min: 1, max: 1000, description: "Size in MB above which the larger strength applies" },
+      over_large_mb_strength: unit(0.8, "Strength above large_mb"),
+      huge_mb: { default: 50, min: 1, max: 1000, description: "Size in MB above which the largest strength applies" },
+      over_huge_mb_strength: unit(0.9, "Strength above huge_mb"),
+    },
+    detect(s, p) {
+      const f = failed(s, "content.heavy_catalogue", n(p, "min_finding_confidence"));
       if (!f) return null;
       const largest = Math.max(0, ...f.evidenceIds.map((id) => s.declaredLength[id] ?? 0));
       const mb = largest / 1024 / 1024;
-      return candidate("catalogue_friction", mb > 50 ? 0.9 : mb > 25 ? 0.8 : 0.6, [f], `catalogue PDF of ${mb.toFixed(1)} MB`);
+      const strength = mb > n(p, "huge_mb") ? n(p, "over_huge_mb_strength") : mb > n(p, "large_mb") ? n(p, "over_large_mb_strength") : n(p, "base");
+      return candidate("catalogue_friction", strength, [f], `catalogue PDF of ${mb.toFixed(1)} MB`, p);
     },
   },
   {
     typeKey: "mobile_commercial_friction",
-    rule: "tech.viewport_meta FAILED: phones render the desktop layout. Strength 0.7.",
-    detect(s) {
-      const f = failed(s, "tech.viewport_meta", 0.8);
-      return f ? candidate("mobile_commercial_friction", 0.7, [f], "no mobile viewport") : null;
+    rule: "tech.viewport_meta FAILED (confidence ≥ min_finding_confidence, default 0.8): phones render the desktop layout.",
+    params: { ...common(0.8), strength: unit(0.7, "Signal strength") },
+    detect(s, p) {
+      const f = failed(s, "tech.viewport_meta", n(p, "min_finding_confidence"));
+      return f ? candidate("mobile_commercial_friction", n(p, "strength"), [f], "no mobile viewport", p) : null;
     },
   },
   {
     typeKey: "slow_mobile_experience",
-    rule: "tech.html_weight FAILED (HTML over 1 MB). Strength 0.5, plus 0.1 when tech.response_time also FAILED. A slow response alone (one measurement) never produces it.",
-    detect(s) {
-      const weight = failed(s, "tech.html_weight");
+    rule: "tech.html_weight FAILED. Strength base, or with_slow_response when tech.response_time also FAILED (at slow_response_min_confidence). A slow response alone (one measurement) never produces it.",
+    params: {
+      ...common(),
+      base: unit(0.5, "Strength for heavy HTML"),
+      with_slow_response: unit(0.6, "Strength for heavy HTML with a slow response"),
+      slow_response_min_confidence: { default: 0.5, min: 0.5, max: 1, description: "Confidence a response-time FAIL needs to add to the strength" },
+    },
+    detect(s, p) {
+      const weight = failed(s, "tech.html_weight", n(p, "min_finding_confidence"));
       if (!weight) return null;
-      const slow = failed(s, "tech.response_time", 0.5);
-      return candidate("slow_mobile_experience", slow ? 0.6 : 0.5, slow ? [weight, slow] : [weight], slow ? "heavy HTML and slow response" : "heavy HTML");
+      const slow = failed(s, "tech.response_time", n(p, "slow_response_min_confidence"));
+      return candidate("slow_mobile_experience", slow ? n(p, "with_slow_response") : n(p, "base"), slow ? [weight, slow] : [weight], slow ? "heavy HTML and slow response" : "heavy HTML", p);
     },
   },
   {
     typeKey: "lead_response_friction",
-    rule: "Any of: phone not tappable (conv.click_to_call), over 6 required form fields (conv.form_required_fields), no call to action in the first screen (conv.primary_cta_first_screen). Strengths 0.5 / 0.5 / 0.4 combined as 1 − ∏(1 − s), capped at 0.9.",
-    detect(s) {
+    rule: "Any of: phone not tappable (conv.click_to_call), too many required form fields (conv.form_required_fields), no call to action in the first screen (conv.primary_cta_first_screen). Part strengths combined as 1 − ∏(1 − s), capped at max_strength.",
+    params: {
+      ...common(),
+      click_to_call: unit(0.5, "Part strength for a phone number that is not tappable"),
+      form_required_fields: unit(0.5, "Part strength for too many required form fields"),
+      primary_cta_first_screen: unit(0.4, "Part strength for no call to action in the first screen"),
+    },
+    detect(s, p) {
+      const min = n(p, "min_finding_confidence");
       const parts: [FindingFact | undefined, number][] = [
-        [failed(s, "conv.click_to_call"), 0.5],
-        [failed(s, "conv.form_required_fields"), 0.5],
-        [failed(s, "conv.primary_cta_first_screen"), 0.4],
+        [failed(s, "conv.click_to_call", min), n(p, "click_to_call")],
+        [failed(s, "conv.form_required_fields", min), n(p, "form_required_fields")],
+        [failed(s, "conv.primary_cta_first_screen", min), n(p, "primary_cta_first_screen")],
       ];
-      const hits = parts.filter((p): p is [FindingFact, number] => !!p[0]);
+      const hits = parts.filter((x): x is [FindingFact, number] => !!x[0]);
       if (!hits.length) return null;
       const strength = 1 - hits.reduce((acc, [, w]) => acc * (1 - w), 1);
-      return candidate("lead_response_friction", strength, hits.map(([f]) => f), hits.map(([f]) => f.checkKey).join(", "));
+      return candidate("lead_response_friction", strength, hits.map(([f]) => f), hits.map(([f]) => f.checkKey).join(", "), p);
     },
   },
   {
     typeKey: "no_qualification_path",
-    rule: "conv.enquiry_form FAILED: no form, no embedded form and no linked contact page (INDETERMINATE never counts). Strength 0.6.",
-    detect(s) {
-      const f = failed(s, "conv.enquiry_form");
-      return f ? candidate("no_qualification_path", 0.6, [f], "no enquiry form or contact page") : null;
+    rule: "conv.enquiry_form FAILED: no form, no embedded form and no linked contact page (INDETERMINATE never counts).",
+    params: { ...common(), strength: unit(0.6, "Signal strength") },
+    detect(s, p) {
+      const f = failed(s, "conv.enquiry_form", n(p, "min_finding_confidence"));
+      return f ? candidate("no_qualification_path", n(p, "strength"), [f], "no enquiry form or contact page", p) : null;
     },
   },
 ];
@@ -137,6 +179,15 @@ export const NOT_AUTOMATED: Record<string, string> = {
   pricing_opacity: "Friction only for some segments (service businesses); absence alone fires on law firms and suppliers.",
 };
 
-export function detectAll(s: AuditSnapshot): Candidate[] {
-  return DETECTORS.map((d) => d.detect(s)).filter((c): c is Candidate => c !== null);
+/** Resolved parameters per detector: stored values (signal_types.detector_params) over code defaults. Throws on an invalid row. */
+export function resolveDetectorParams(stored: Readonly<Record<string, unknown>> = {}): Record<string, Params> {
+  return Object.fromEntries(DETECTORS.map((d) => [d.typeKey, resolveParams(d.params, stored[d.typeKey], `detector ${d.typeKey}`)]));
+}
+
+/**
+ * Runs every detector. Only FAIL findings are read: capacity results (PRESENT/ABSENT) are
+ * evidence of scale for commercial potential and never become signals.
+ */
+export function detectAll(s: AuditSnapshot, params: Readonly<Record<string, Params>> = {}): Candidate[] {
+  return DETECTORS.map((d) => d.detect(s, params[d.typeKey] ?? resolveParams(d.params, undefined, d.typeKey))).filter((c): c is Candidate => c !== null);
 }

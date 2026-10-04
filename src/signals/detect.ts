@@ -6,7 +6,7 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { getCompanySignalsNow } from "@/db/company-scope";
 import * as s from "@/db/schema/index";
 import { type ActiveSignal, axisContributions } from "./axes";
-import { type AuditSnapshot, detectAll } from "./detectors";
+import { type AuditSnapshot, detectAll, resolveDetectorParams } from "./detectors";
 
 type Db = NodePgDatabase<typeof s>;
 
@@ -69,7 +69,10 @@ export async function detectSignalsForAudit(db: Db, auditId: string): Promise<De
   if (!loaded) return { auditId, status: "abstained", reason: "audit is not COMPLETED; nothing to interpret", created: [], existing: 0, retracted: 0 };
   const { snapshot, audit } = loaded;
   const types = await signalTypes(db);
-  const candidates = detectAll(snapshot);
+  // Strengths and thresholds come from signal_types.detector_params; an invalid row stops
+  // detection rather than running on a value the operator did not choose.
+  const params = resolveDetectorParams(Object.fromEntries([...types.values()].map((t) => [t.key, t.detectorParams])));
+  const candidates = detectAll(snapshot, params);
   for (const c of candidates) {
     const t = types.get(c.typeKey);
     if (!t) throw new Error(`Unknown signal type ${c.typeKey}`);
@@ -94,6 +97,7 @@ export async function detectSignalsForAudit(db: Db, auditId: string): Promise<De
           observedAt: obs?.at ? new Date(obs.at) : (audit.completedAt ?? new Date()),
           detectedBy: "rule",
           detectorRef: `${c.typeKey}${ref}`,
+          detectorParams: params[c.typeKey],
         })
         .onConflictDoNothing()
         .returning({ id: s.signals.id });
@@ -210,7 +214,6 @@ export async function companySignalView(db: Db, companyId: string, now = new Dat
       axis: (t?.axis ?? "opportunity") as ActiveSignal["axis"],
       strengthNow: x.strengthNow,
       evidenceIds: evidence.filter((e) => e.signalId === x.id).map((e) => e.evidenceId),
-      intentRequiresIndependentSignal: t?.intentRequiresIndependentSignal ?? false,
     };
   });
   return { signals, active, axes: axisContributions(active) };

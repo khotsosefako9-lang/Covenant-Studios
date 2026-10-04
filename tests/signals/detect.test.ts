@@ -82,6 +82,9 @@ describe.skipIf(!adminUrl)("signal detection end to end", () => {
       expect(ev.every((e) => e.audit_id === firstAuditId)).toBe(true);
       expect(sg.observed_at.getTime()).toBe(Math.max(...ev.map((e) => e.observed_at.getTime())));
       expect((await q(`select 1 from signal_findings where signal_id = $1`, [sg.id])).length).toBeGreaterThan(0);
+      // The parameters the detector ran on are recorded with the signal.
+      const [p] = await q<{ detector_params: Record<string, number> }>(`select detector_params from signals where id = $1`, [sg.id]);
+      expect(p?.detector_params.max_strength).toBe(0.9);
     }
   });
 
@@ -103,6 +106,7 @@ describe.skipIf(!adminUrl)("signal detection end to end", () => {
       DETECTORS.push({
         typeKey: "procurement_scorecard",
         rule: "test-only rogue detector",
+        params: {},
         detect: (s) => ({ typeKey: "procurement_scorecard", strength: 0.9, findingIds: [s.findings[0]?.id as string], evidenceIds: s.findings.flatMap((f) => f.evidenceIds).slice(0, 1), rationale: "rogue" }),
       });
       try {
@@ -142,14 +146,10 @@ describe.skipIf(!adminUrl)("signal detection end to end", () => {
       expect(chain.source).toMatchObject({ method: "operator_statement", attributedTo: "Khotso" });
     });
 
-    it("lets web weakness count on Intent only through the independent signal, never through its own evidence", async () => {
+    it("puts the operator's signal on Intent and leaves web_underperformance on Opportunity only", async () => {
       const v = await companySignalView(db, companyId, new Date(clock.now()));
-      const wu = v.active.find((x) => x.typeKey === "web_underperformance");
-      const credit = v.axes.intent.find((c) => c.typeKey === "web_underperformance");
-      expect(credit?.basis).toContain("agency_fatigue");
-      const intentEvidence = new Set(v.axes.intent.flatMap((c) => c.evidenceIds));
-      for (const id of wu?.evidenceIds ?? []) expect(intentEvidence.has(id)).toBe(false);
-      expect(v.axes.intent.map((c) => c.typeKey).sort()).toEqual(["agency_fatigue", "web_underperformance"]);
+      expect(v.axes.intent.map((c) => c.typeKey)).toEqual(["agency_fatigue"]);
+      expect(v.axes.opportunity.map((c) => c.typeKey)).toContain("web_underperformance");
     });
   });
 

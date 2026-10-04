@@ -73,3 +73,22 @@ export async function getCompanySignalsNow(db: Db, companyId: string, now = new 
     strengthNow: decayedStrength({ strength: Number(r.signal.strength), observedAt: r.signal.observedAt, decayDays: r.decayDays, now }),
   }));
 }
+
+/** A business's current opportunities (not superseded) across its identity cluster, ranked. */
+export async function getCompanyOpportunities(db: Db, companyId: string, opts: { includeSuperseded?: boolean } = {}) {
+  return db
+    .select({
+      opportunity: s.opportunities,
+      typeKey: s.opportunityTypes.key,
+      typeName: s.opportunityTypes.name,
+      serviceKey: s.covenantServices.key,
+      serviceName: s.covenantServices.name,
+      priceLowZar: s.covenantServices.priceLowZar,
+      priceHighZar: s.covenantServices.priceHighZar,
+    })
+    .from(s.opportunities)
+    .innerJoin(s.opportunityTypes, eq(s.opportunityTypes.id, s.opportunities.opportunityTypeId))
+    .leftJoin(s.covenantServices, eq(s.covenantServices.id, s.opportunities.covenantServiceId))
+    .where(and(inCompanyCluster(s.opportunities.companyId, companyId), opts.includeSuperseded ? undefined : sql`${s.opportunities.supersededAt} is null`))
+    .orderBy(s.opportunities.derivedAt, s.opportunities.rank);
+}

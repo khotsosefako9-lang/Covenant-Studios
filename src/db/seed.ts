@@ -5,6 +5,8 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { and, eq, inArray, isNull, ne, notInArray, or, sql } from "drizzle-orm";
 import * as s from "./schema/index";
 import { ALL_CHECKS } from "../audit/registry";
+import { defaultsOf } from "../core/params";
+import { DETECTORS } from "../signals/detectors";
 import * as data from "./seed-data";
 import { parseSetting } from "./validation";
 
@@ -100,7 +102,6 @@ export async function seed(db: Db): Promise<void> {
           name: st.name,
           kind: st.kind,
           axis: st.axis,
-          intentRequiresIndependentSignal: st.intentRequiresIndependentSignal ?? false,
           humanOnly: st.humanOnly ?? false,
           group: st.group,
           detectableFrom: st.detectableFrom,
@@ -114,6 +115,22 @@ export async function seed(db: Db): Promise<void> {
         .update(s.signalTypes)
         .set({ decayDays: st.decayDays, axis: sql`coalesce(${s.signalTypes.axis}, ${st.axis}::score_axis)`, configOrigin: "default" })
         .where(and(eq(s.signalTypes.key, st.key), isNull(s.signalTypes.decayDays), ne(s.signalTypes.configOrigin, "operator")));
+      // The description of what detects a type follows the code unless an operator edited the row.
+      if (st.detectableFrom) {
+        await tx
+          .update(s.signalTypes)
+          .set({ detectableFrom: st.detectableFrom })
+          .where(and(eq(s.signalTypes.key, st.key), ne(s.signalTypes.configOrigin, "operator")));
+      }
+    }
+    // Detector parameters: code defaults fill missing keys; stored values and operator rows are kept.
+    for (const d of DETECTORS) {
+      const [row] = await tx.select({ params: s.signalTypes.detectorParams, origin: s.signalTypes.configOrigin }).from(s.signalTypes).where(eq(s.signalTypes.key, d.typeKey));
+      if (!row || row.origin === "operator") continue;
+      const defaults = defaultsOf(d.params);
+      const current = (row.params ?? {}) as Record<string, unknown>;
+      const merged = { ...defaults, ...Object.fromEntries(Object.entries(current).filter(([k]) => k in defaults)) };
+      if (JSON.stringify(merged) !== JSON.stringify(row.params ?? null)) await tx.update(s.signalTypes).set({ detectorParams: merged }).where(eq(s.signalTypes.key, d.typeKey));
     }
 
     const sigIds = new Map(
@@ -123,10 +140,25 @@ export async function seed(db: Db): Promise<void> {
       .insert(s.signalTypeOpportunityTypes)
       .values(
         Object.entries(data.signalTypeOpportunityTypes).flatMap(([sig, types]) =>
-          types.map((t) => ({ signalTypeId: need(sigIds, sig), opportunityTypeId: need(typeIds, t), configOrigin: "default" as const })),
+          types.map((t, i) => ({ signalTypeId: need(sigIds, sig), opportunityTypeId: need(typeIds, t), preference: i + 1, configOrigin: "default" as const })),
         ),
       )
       .onConflictDoNothing();
+    // Rows seeded before preferences existed (Phase 8) take the array order, unless an operator set them.
+    for (const [sig, types] of Object.entries(data.signalTypeOpportunityTypes)) {
+      for (const [i, t] of types.entries()) {
+        await tx
+          .update(s.signalTypeOpportunityTypes)
+          .set({ preference: i + 1 })
+          .where(
+            and(
+              eq(s.signalTypeOpportunityTypes.signalTypeId, need(sigIds, sig)),
+              eq(s.signalTypeOpportunityTypes.opportunityTypeId, need(typeIds, t)),
+              ne(s.signalTypeOpportunityTypes.configOrigin, "operator"),
+            ),
+          );
+      }
+    }
 
     await tx
       .insert(s.icpSegments)
@@ -202,6 +234,18 @@ export async function seed(db: Db): Promise<void> {
         .insert(s.auditChecks)
         .values({ key: c.key, ...doc })
         .onConflictDoUpdate({ target: s.auditChecks.key, set: { ...doc, updatedAt: sql`now()` } });
+      // Thresholds: code defaults fill keys that are missing; a stored value is never
+      // overwritten, and an operator's row is never touched.
+      const defaults = defaultsOf(c.params);
+      if (!Object.keys(defaults).length) continue;
+      const [row] = await tx.select({ params: s.auditChecks.params, origin: s.auditChecks.configOrigin }).from(s.auditChecks).where(eq(s.auditChecks.key, c.key));
+      if (row?.origin === "operator") continue;
+      const current = (row?.params ?? {}) as Record<string, unknown>;
+      const merged = { ...defaults, ...Object.fromEntries(Object.entries(current).filter(([k]) => k in defaults)) };
+      // Thresholds are operator-adjustable defaults set in code, not documented Covenant facts.
+      if (JSON.stringify(merged) !== JSON.stringify(row?.params ?? null) || row?.origin !== "default") {
+        await tx.update(s.auditChecks).set({ params: merged, configOrigin: "default" }).where(eq(s.auditChecks.key, c.key));
+      }
     }
 
     await tx

@@ -119,13 +119,23 @@ describe("the audit layer is deterministic and claims only what a page shows", (
   });
 });
 
+describe("capacity never becomes a signal or an opportunity", () => {
+  it("signal detection and opportunity derivation do not read capacity results", () => {
+    const readers = src.filter((f) => /^src\/(signals|commercial\/derive)/.test(f.path) && /capacity\.|"PRESENT"|"ABSENT"|capacityProfile|CAPACITY_CHECK_KEYS/.test(stripComments(f.text)));
+    expect(readers.map((f) => f.path)).toEqual([]);
+  });
+});
+
 describe("claim types match their writers", () => {
-  it("only the audit writes VERIFIED; ingest and operator statements write REPORTED; nothing writes INFERRED yet", () => {
+  it("only the audit writes VERIFIED; ingest and operator statements write REPORTED; only opportunity derivation writes INFERRED", () => {
     const writes = src.flatMap((f) =>
       [...stripComments(f.text).matchAll(/claimType:\s*"(VERIFIED|REPORTED|INFERRED|UNKNOWN)"/g)].map((m) => `${f.path}:${m[1]}`),
     );
     expect(writes.filter((w) => !w.startsWith("src/db/schema/")).sort()).toEqual([
       "src/audit/run.ts:VERIFIED",
+      // Phase 9: the first permitted INFERRED writer. It writes opportunities (interpretations),
+      // never evidence rows.
+      "src/commercial/opportunities.ts:INFERRED",
       "src/ingest/companies.ts:REPORTED",
       "src/signals/detect.ts:REPORTED", // operator-recorded signals: an attributed statement
     ]);

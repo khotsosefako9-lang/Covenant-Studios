@@ -16,6 +16,22 @@ export const fail = (detail: string, confidence: number, evidence: EvidenceItem[
   ...(severity ? { severity } : {}),
 });
 
+/** Capacity checks: a marker of operating scale is on the page. */
+export const present = (detail: string, confidence: number, evidence: EvidenceItem[]): CheckResult => ({
+  status: "PRESENT",
+  confidence,
+  detail,
+  evidence,
+});
+
+/** Capacity checks: the page was read and carries no such marker. */
+export const absent = (detail: string, confidence: number, evidence: EvidenceItem[] = []): CheckResult => ({
+  status: "ABSENT",
+  confidence,
+  detail,
+  evidence,
+});
+
 export const notApplicable = (detail: string): CheckResult => ({ status: "NOT_APPLICABLE", confidence: 1, detail, evidence: [] });
 
 export const indeterminate = (detail: string, evidence: EvidenceItem[] = []): CheckResult => ({

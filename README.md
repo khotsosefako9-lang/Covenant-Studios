@@ -400,7 +400,7 @@ Wording-based checks only judge English pages. On a page declared as another lan
 one, they return `INDETERMINATE`. Language-neutral signals still count: `tel:`, `mailto:` and WhatsApp
 links, forms, phone numbers.
 
-### The check set (`audit_checks`, version `m0.1`)
+### The check set (`audit_checks`, version `m0.1`; `m0.2` from Phase 9 adds six capacity checks)
 
 | Check | FAIL severity | Rule | Evidence recorded |
 | --- | --- | --- | --- |
@@ -526,8 +526,8 @@ each evidence row with the retrieval time of the source record it cites. No stor
   - Phase 0: no evidence without a source record; one active company per domain; scores within 0–100;
     confidences within 0–1; qualified leads scored after their latest audit; no fresh mark past its
     window. The only stored freshness mark is a contact channel's `verified` state.
-  - Provenance: every cited source record is locatable; each writer's claim types; no `INFERRED` rows
-    yet; audit evidence is never observed before its retrieval; finding evidence belongs to the same
+  - Provenance: every cited source record is locatable; each writer's claim types; no `INFERRED`
+    evidence rows (Phase 9's INFERRED writer writes opportunities, not evidence); audit evidence is never observed before its retrieval; finding evidence belongs to the same
     company cluster; every FAIL cites evidence; every completed audit names its page; every company name
     is evidenced.
   - The two outreach invariants report `not_applicable` until M3.
@@ -545,7 +545,10 @@ records). There is no HTML re-reading and no AI. Abstention is the default.
 
 ### Automated detectors (all on the Opportunity axis)
 
-| Signal | Rule | Strength |
+The strengths and thresholds below are the code defaults. From Phase 9 they are configuration rows
+(`signal_types.detector_params`); see "Thresholds are configuration" under Phase 9.
+
+| Signal | Rule | Strength (default) |
 | --- | --- | --- |
 | `web_underperformance` | At least one medium- or high-severity FAIL with confidence ≥ 0.6 | 0.3 + 0.15 per medium + 0.25 per high, max 0.9 |
 | `catalogue_friction` | `content.heavy_catalogue` FAIL (linked PDF over 10 MB) | 0.6; 0.8 above 25 MB; 0.9 above 50 MB |
@@ -584,18 +587,20 @@ or later from the commercial-potential floor (Phase 10).
 
 ### The web_underperformance rule
 
-`web_underperformance` counts on Opportunity always. It counts on Intent only when an independent Intent
-signal is present: a different signal resting on none of the same evidence. Its Intent credit is the
-weaker of the two strengths, and it rests on the independent signal's evidence, never on its own. So no
-weakness evidence ever reaches the Intent axis. `src/signals/axes.ts` holds the rule; it is tested
-directly and across all 961 evidence-overlap combinations of a five-item pool.
+Corrected in Phase 9: `web_underperformance` counts on **Opportunity only, always**. The Phase 8
+mechanism that credited it on Intent when an independent Intent signal was present has been deleted,
+with its tests and the `signal_types.intent_requires_independent_signal` column (migration 0008).
+Crediting it on another signal's evidence counted that evidence twice on one axis. A database
+constraint (`signal_types_web_underperformance_opportunity`) keeps its axis at `opportunity`, so no
+operator edit can move it.
 
 ### Signal → opportunity type (configuration)
 
 `signal_type_opportunity_types` has 24 rows, all `config_origin = default`. They are derived from the
 Phase 0 benchmark reasoning and the mapping table, not documented Covenant facts. `procurement_scorecard`
 and `agency_fatigue` are deliberately unmapped, because no documented service follows from them.
-Opportunity derivation itself is Phase 9.
+Phase 9 added a `preference` per row (the array order in `src/db/seed-data.ts`) and the derivation that
+reads them.
 
 ### Regression
 
@@ -607,6 +612,105 @@ evidence, that no rule-detected signal has a human-only type, and that no signal
 npm run signals -- detect <auditId>
 npm run signals -- list   <companyId>
 npm run signals -- add    <companyId> --type agency_fatigue --strength 0.6 --basis "What you know and how" --by "Khotso"
+```
+
+## Phase 9 — capacity checks and opportunity mapping
+
+### Capacity checks (Phase 6 addendum)
+
+Six structural checks in `src/audit/checks/capacity.ts`, category `capacity`, check set `m0.2`. They
+evidence **capacity, not intent**: a business with three branches and an open vacancy is demonstrably
+operating at scale, not demonstrably in the market for a website. They return `PRESENT`, `ABSENT`,
+`INDETERMINATE` or `NOT_APPLICABLE`, never `PASS`/`FAIL`, so none carries a severity (enforced by the
+evaluator, which reports a wrong status as `ERROR`, and by `audit_findings_severity_only_on_fail`).
+
+| Check | PRESENT when | INDETERMINATE when |
+| --- | --- | --- |
+| `capacity.careers_page` | A careers or vacancies link (path, link text), a careers/jobs subdomain or recruitment platform, or `JobPosting` structured data | Only a "jobs" link: trade sites use it for completed work |
+| `capacity.multiple_locations` | At least 2 distinct postal addresses of the business in JSON-LD or microdata; event venues, job locations and people are excluded | No structured address data. Locations are never counted from prose |
+| `capacity.online_shop` | A cart, basket or checkout link, an add-to-cart control, or a hosted store (Shopify, Ecwid) | Only a shop link, WooCommerce assets or priced products: a catalogue without a cart is not a shop |
+| `capacity.client_logo_wall` | At least 4 images with little text, labelled clients or customers | The label says partners, both clients and sponsors, or nothing (unlabelled logos) |
+| `capacity.sponsor_section` | At least 3 logos, or links to 3 external sites, labelled sponsors ("sponsors & partners" counts) | Partners alone, clients and sponsors together, unlabelled logos, or a sponsors heading or link naming no one. Selling sponsorship ("Become a sponsor", "Sponsorship packages") is inventory, not sponsors |
+| `capacity.accreditation` | A named body ("members of the Legal Practice Council", "registered with PIRB") or an ISO management-system certification | An "Accreditations" heading naming no body in text |
+
+Sponsor walls and client walls look alike in markup. The label decides, and when it doesn't, both checks
+return `INDETERMINATE`. Brands a supplier stocks, team photos, galleries and product grids are not walls
+of either. Product approvals ("SABS-approved"), statutory registrations (CIPC, SARS) and B-BBEE levels
+are not memberships. B-BBEE stays with the human-only `procurement_scorecard`. `conv.trust_signals` is
+unchanged; accreditation is a separate capacity check, not an extension of a PASS/FAIL conversion check.
+
+**Across the six controls** (pinned in `tests/audit/controls.test.ts`; controls firing here is expected):
+
+| Control | careers | locations | shop | client wall | sponsors | accreditation |
+| --- | --- | --- | --- | --- | --- | --- |
+| plumber | ABSENT | ABSENT (one JSON-LD address) | ABSENT | ABSENT | ABSENT | ABSENT |
+| industrial | ABSENT | INDETERMINATE | ABSENT | ABSENT ("Trusted by", 2 logos) | ABSENT | ABSENT ("SABS-approved" is a product approval) |
+| rugby | ABSENT | INDETERMINATE | ABSENT | ABSENT | INDETERMINATE (heading and /sponsors/ link, no sponsor named) | ABSENT |
+| lawfirm | ABSENT | INDETERMINATE | ABSENT | ABSENT | ABSENT ("& Partners" is the firm's name) | **PRESENT** (Legal Practice Council) |
+| nextjs-ssr | ABSENT | INDETERMINATE | INDETERMINATE (/shop link, not read) | ABSENT | ABSENT | ABSENT |
+| wordpress | ABSENT | INDETERMINATE | ABSENT | ABSENT | ABSENT | ABSENT |
+
+No control produces a FAIL at low or above, and the controls still produce zero signals.
+
+Capacity results feed `commercial_potential` through `capacityProfile()` (`src/commercial/capacity.ts`).
+That dimension is scored in Phase 10. They never become signals, never reach Intent, and are never read
+by opportunity derivation. This is enforced by an architecture test and the `capacity_not_signal` invariant.
+
+### Thresholds are configuration
+
+Every check threshold and detector strength is a configuration row. The code declares each parameter
+with its default and the bounds an operator may set it within (`src/core/params.ts`):
+
+- check thresholds live in `audit_checks.params`;
+- detector strengths live in `signal_types.detector_params`.
+
+The seed fills code defaults (`config_origin = default`) and never overwrites a stored value or an
+operator's row. A value outside its bounds, or an unknown key, fails the audit or the detection; nothing
+silently falls back. Each audit records the thresholds it ran on (`audits.check_params`), and each signal
+records its detector's parameters (`signals.detector_params`). The code defaults are pinned in
+`tests/audit/severity-pins.test.ts`, alongside the severities, because the control set is tested against them.
+
+```sh
+npm run thresholds -- list
+npm run thresholds -- set check content.heavy_catalogue max_pdf_bytes 20971520
+npm run thresholds -- set detector web_underperformance per_medium 0.1
+```
+
+### Opportunity derivation
+
+`src/commercial/derive.ts` (pure) and `src/commercial/opportunities.ts` (writer) implement
+finding → signal → opportunity type → Covenant service. The writer is the first code permitted to write
+`INFERRED`, and the architecture test names it as the only `INFERRED` writer. It writes opportunities,
+never evidence rows.
+
+- **Relevance** of a type is 1 − ∏(1 − strength × w) over the active signals that map to it and that
+  nothing chosen so far explains. The weight w is 1 for a signal's first-preference type and
+  `secondary_mapping_weight`^(preference − 1) for later ones (default 0.7). Strengths are decayed to
+  the derivation time.
+- **Consolidation, not enumeration.** Types are chosen greedily by relevance. A chosen type explains
+  every signal mapped to it, and every signal whose evidence it already rests on. A further opportunity
+  is produced only from signals nothing chosen explains, so each signal rests on exactly one opportunity.
+  If the evidence supports one opportunity, the result is one. The weak supplier fixture's four signals
+  give one opportunity: website rebuild → Custom Business Website.
+- Stops below `min_relevance` (default 0.3) or at `max_opportunities` (default 3). These live in the
+  setting `opportunity_derivation`.
+- **Confidence** = `confidence_verifiability.INFERRED` (0.6) × the strength-weighted confidence of the
+  basis. For a rule signal the basis is its findings; for an operator signal it is REPORTED, 0.8. An
+  opportunity is never more confident than an inference may be.
+- **Service** = the type's first-preference active service (`opportunity_type_services`).
+- Each opportunity stores its type, service, rank, relevance, confidence, rationale and inference rule.
+  It also stores the signals (`opportunity_signals`) and findings (`opportunity_findings`) it rests on.
+- Re-deriving with nothing changed is a no-op. Otherwise the current set is superseded, never deleted.
+- `finding_opportunity_mappings` (Phase 2) is not used: findings reach opportunity types only through
+  signals, so every opportunity rests on a signal. The `finding_opportunity_mappings_unused` invariant
+  flags any active row, so a row there cannot look live and do nothing.
+
+New invariants: `capacity_not_signal`, `opportunity_rests_on_signal`, `current_opportunity_signals_active`
+(re-derive after a re-audit), `opportunity_support_same_company`, and `finding_opportunity_mappings_unused`.
+
+```sh
+npm run opportunities -- derive <companyId>
+npm run opportunities -- list   <companyId> [--history]
 ```
 
 ## Running locally
@@ -644,7 +748,9 @@ and target phase, and are not built in M0.
 | True total page weight | Needs every asset downloaded: dozens of extra requests per prospect | Approval to spend the politeness budget on assets | A real page-weight figure | Not before M1 |
 | Wording checks in Afrikaans and isiXhosa | Vocabulary checks are English-only and abstain elsewhere | Bilingual vocabulary lists checked by a fluent speaker | Fewer INDETERMINATE results on SA sites | After the benchmark |
 | `/bot` page on covenant-studios.co.za | The User-Agent should point site owners at an explanation and an opt-out | The Covenant website being updated | Site owners can identify and contact the crawler | Next time the site is touched |
-| Deterministic checks that evidence Intent (sponsor/partner section, ticketing, careers page, "new branch" announcements) | No current finding evidences intent, so automated Intent is zero in M0 | A Phase 6-style check extension held to the control set | Automated intent candidates for operator review | If the benchmark shows the intent gate starved |
+| Deterministic checks that evidence Intent (ticketing, "new branch" announcements) | Phase 9's capacity checks (careers, branches, shop, logo walls, sponsors, accreditation) evidence scale, not intent, and feed commercial potential; automated Intent stays zero in M0 | A Phase 6-style check extension held to the control set | Automated intent candidates for operator review | If the benchmark shows the intent gate starved |
+| Per-result confidences and probe limits as configuration | Thresholds and detector strengths are configuration from Phase 9. A check's confidence in each of its own outcomes (e.g. 0.85) and the probe limits (5 links, 3 PDFs, 4 profiles) are still literals, versioned with the check and pinned by the control set | Benchmark evidence of which confidences are miscalibrated | Calibrated confidences | After the benchmark |
+| Commercial-potential scoring from capacity | `capacityProfile()` exposes the evidence; no score is computed in Phase 9 | Scoring (Phase 10) | The second route through the intent gate | Phase 10 |
 | Segment-aware friction signals (`whatsapp_conversion_opportunity`, `pricing_opacity`) | They are friction only in some segments; they fire wrongly without one | ICP segment assignment on companies | Segment-relevant opportunity signals | After ICP segments are configured |
 | Rendering JavaScript-only pages | Phase 0 makes headless rendering opt-in per check; no browser in Phase 5 | The audit check set (Phase 6) identifying checks that need it | Audits of JS-only sites | Phase 6 or later, with approval |
 | Charset from `<meta charset>` | The body is decoded by the `Content-Type` charset, else UTF-8; reading `<meta>` is parsing | Phase 6 parsing | Correct text on pages that declare their charset only in HTML | Phase 6 |

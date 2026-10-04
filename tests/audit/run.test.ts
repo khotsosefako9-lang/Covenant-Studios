@@ -65,12 +65,12 @@ describe.skipIf(!adminUrl)("audit runs against fixture sites", () => {
     const f = await site({ "/robots.txt": robots("User-agent: *\nAllow: /"), "/sitemap.xml": raw("<urlset/>", "application/xml"), "/": raw(offline(fixture("controls/plumber.html"))) }, html("sub page"));
     const id = await company();
     const r = await audit(id, `${f.origin}/`);
-    expect(r).toMatchObject({ status: "COMPLETED", findings: 30 });
+    expect(r).toMatchObject({ status: "COMPLETED", findings: 36 });
 
     const [a] = await q<{ status: string; page_source_record_id: string; check_set_version: string }>(`select * from audits where id = $1`, [r.auditId]);
     expect(a?.page_source_record_id).toBeTruthy();
     const findings = await q<{ check_key: string; status: string; severity: string | null; confidence: string }>(`select * from audit_findings where audit_id = $1`, [r.auditId]);
-    expect(findings).toHaveLength(30);
+    expect(findings).toHaveLength(36);
     expect(findings.filter((x) => x.status !== "FAIL").every((x) => x.severity === null)).toBe(true);
     expect(findings.filter((x) => x.status === "FAIL" && ["medium", "high"].includes(x.severity ?? ""))).toEqual([]);
 
@@ -145,10 +145,45 @@ describe.skipIf(!adminUrl)("audit runs against fixture sites", () => {
     try {
       const f = await site({ "/robots.txt": robots("User-agent: *\nAllow: /"), "/": raw(offline(fixture("controls/lawfirm.html"))) }, html("x"));
       const r = await audit(await company("Mbeki"), `${f.origin}/`);
-      expect(r.findings).toBe(29);
+      expect(r.findings).toBe(35);
       expect(await q(`select 1 from audit_findings where audit_id = $1 and check_key = 'conv.whatsapp_link'`, [r.auditId])).toEqual([]);
     } finally {
       await pool.query(`update audit_checks set enabled = true where key = 'conv.whatsapp_link'`);
+    }
+  });
+
+  it("runs on the configured thresholds and records them on the audit", async () => {
+    const page = `<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width"><title>Supplier</title></head><body><h1>Supplier</h1><p>${"We supply valves to plants across the Eastern Cape. ".repeat(10)}</p><a href="/c.pdf">Product catalogue</a></body></html>`;
+    const routes = {
+      "/robots.txt": robots("User-agent: *\nAllow: /"),
+      "/": raw(page),
+      "/c.pdf": ((_req, res) => {
+        res.writeHead(200, { "content-type": "application/pdf", "content-length": String(3 * 1024 * 1024) });
+        res.end();
+      }) as Handler,
+    };
+    const statusOf = async (auditId: string) =>
+      (await q<{ status: string }>(`select status from audit_findings where audit_id = $1 and check_key = 'content.heavy_catalogue'`, [auditId]))[0]?.status;
+    const before = await audit(await company("Valves"), `${(await site(routes, html("x"))).origin}/`);
+    expect(await statusOf(before.auditId)).toBe("PASS");
+    const [a] = await q<{ check_params: Record<string, Record<string, number>> }>(`select check_params from audits where id = $1`, [before.auditId]);
+    expect(a?.check_params["content.heavy_catalogue"]).toEqual({ max_pdf_bytes: 10 * 1024 * 1024 });
+
+    await pool.query(`update audit_checks set params = '{"max_pdf_bytes": 2097152}', config_origin = 'operator' where key = 'content.heavy_catalogue'`);
+    try {
+      const after = await audit(await company("Valves"), `${(await site(routes, html("x"))).origin}/`);
+      expect(await statusOf(after.auditId)).toBe("FAIL");
+      const [b] = await q<{ check_params: Record<string, Record<string, number>> }>(`select check_params from audits where id = $1`, [after.auditId]);
+      expect(b?.check_params["content.heavy_catalogue"]).toEqual({ max_pdf_bytes: 2097152 });
+
+      // Below the check's floor (1 MB) or an unknown key: the audit fails rather than guess.
+      await pool.query(`update audit_checks set params = '{"max_pdf_bytes": 1000}' where key = 'content.heavy_catalogue'`);
+      const bad = await audit(await company("Valves"), `${(await site(routes, html("x"))).origin}/`);
+      expect(bad.status).toBe("FAILED");
+      const [c] = await q<{ error_detail: string }>(`select error_detail from audits where id = $1`, [bad.auditId]);
+      expect(c?.error_detail).toContain("content.heavy_catalogue");
+    } finally {
+      await pool.query(`update audit_checks set params = '{"max_pdf_bytes": 10485760}', config_origin = 'default' where key = 'content.heavy_catalogue'`);
     }
   });
 

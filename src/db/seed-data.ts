@@ -140,7 +140,6 @@ interface SignalTypeSeed {
   name: string;
   kind: "documented_trigger" | "friction";
   axis: "intent" | "opportunity" | null;
-  intentRequiresIndependentSignal?: boolean;
   humanOnly?: boolean;
   decayDays: number;
   group?: string;
@@ -176,8 +175,8 @@ export const signalTypes: SignalTypeSeed[] = [
     name: "Outdated or underperforming web assets",
     kind: "documented_trigger",
     axis: "opportunity",
-    intentRequiresIndependentSignal: true,
-    detectableFrom: "Audit findings; counts as intent only with independent evidence of an operating, growing business",
+    // Phase 9: Opportunity only, always. Never credited on Intent, under any condition.
+    detectableFrom: "Audit findings. Counts on the Opportunity axis only, never on Intent",
   },
   {
     key: "procurement_scorecard",
@@ -367,6 +366,14 @@ export const settings: { key: SettingKey; value: unknown; origin: Origin; descri
   { key: "fetch_cache_ttl_hours", value: 24, origin: "default", description: "A page fetched OK within this window is served from the stored record; after it, a conditional request is used." },
   { key: "robots_cache_ttl_hours", value: 24, origin: "default", description: "How long a fetched robots.txt is reused (RFC 9309 caps caching at 24 hours)." },
   { key: "confidence_recency_floor", value: 0.4, origin: "documented", description: "Recency factor at twice the refresh window (Phase 0 'Confidence')." },
+  {
+    key: "opportunity_derivation",
+    value: { secondary_mapping_weight: 0.7, min_relevance: 0.3, max_opportunities: 3 },
+    origin: "default",
+    description:
+      "Opportunity derivation (Phase 9). secondary_mapping_weight: how much a signal counts toward its second-preference opportunity type (raised to the power of preference − 1). " +
+      "min_relevance: an opportunity type below this relevance is not produced. max_opportunities: the most a company holds at once.",
+  },
 ];
 
 // Phase 0, "Benchmark dataset v1". Evaluation labels only; never read by the pipeline.

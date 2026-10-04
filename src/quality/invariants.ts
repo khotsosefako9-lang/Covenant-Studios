@@ -100,7 +100,7 @@ export const INVARIANTS: Invariant[] = [
   },
   {
     key: "no_inferred_evidence_yet",
-    description: "Nothing in M0 writes INFERRED evidence yet; any INFERRED row has no known writer.",
+    description: "No INFERRED evidence rows: the only INFERRED writer (opportunity derivation, Phase 9) writes opportunities, never evidence.",
     violations: sql`select id::text, producer || ' wrote INFERRED ' || claim_key as detail from evidence where claim_type = 'INFERRED'`,
   },
   {
@@ -156,6 +156,45 @@ export const INVARIANTS: Invariant[] = [
     violations: sql`select sg.id::text, 'observed ' || sg.observed_at || ' before evidence ' || max(e.observed_at) as detail
       from signals sg join signal_evidence se on se.signal_id = sg.id join evidence e on e.id = se.evidence_id
       group by sg.id, sg.observed_at having sg.observed_at < max(e.observed_at) - interval '1 second'`,
+  },
+  // --- Capacity and opportunities (Phase 9) ---
+  {
+    key: "capacity_not_signal",
+    description: "No signal rests on a capacity finding: capacity feeds commercial potential, never a signal (and so never Intent).",
+    violations: sql`select sf.signal_id::text, 'rests on ' || f.check_key as detail from signal_findings sf
+      join audit_findings f on f.id = sf.audit_finding_id join audit_checks c on c.key = f.check_key where c.category = 'capacity'`,
+  },
+  {
+    key: "opportunity_rests_on_signal",
+    description: "Every current opportunity rests on at least one signal.",
+    violations: sql`select o.id::text, 'opportunity with no signal' as detail from opportunities o
+      where o.superseded_at is null and not exists (select 1 from opportunity_signals os where os.opportunity_id = o.id)`,
+  },
+  {
+    key: "current_opportunity_signals_active",
+    description: "No current opportunity rests on a retracted signal; re-derive after a re-audit (npm run opportunities -- derive).",
+    violations: sql`select o.id::text, 'rests on retracted signal ' || sg.id as detail from opportunities o
+      join opportunity_signals os on os.opportunity_id = o.id join signals sg on sg.id = os.signal_id
+      where o.superseded_at is null and sg.status <> 'active'`,
+  },
+  {
+    key: "opportunity_support_same_company",
+    description: "The signals and findings behind an opportunity belong to its company's identity cluster.",
+    violations: sql`select o.id::text, 'signal ' || sg.id || ' belongs to another company' as detail from opportunities o
+      join opportunity_signals os on os.opportunity_id = o.id join signals sg on sg.id = os.signal_id
+      join company_roots ro on ro.company_id = o.company_id join company_roots rs on rs.company_id = sg.company_id
+      where ro.root_id <> rs.root_id
+      union all select o.id::text, 'finding ' || f.id || ' belongs to another company' from opportunities o
+      join opportunity_findings ofn on ofn.opportunity_id = o.id join audit_findings f on f.id = ofn.audit_finding_id
+      join audits a on a.id = f.audit_id join company_roots ro on ro.company_id = o.company_id join company_roots ra on ra.company_id = a.company_id
+      where ro.root_id <> ra.root_id`,
+  },
+  {
+    key: "finding_opportunity_mappings_unused",
+    description:
+      "finding_opportunity_mappings has no active rows: findings reach opportunity types only through signals, so a row there would look live and do nothing.",
+    violations: sql`select check_key || '→' || opportunity_type_id as id, 'active direct finding mapping has no effect' as detail
+      from finding_opportunity_mappings where active`,
   },
 ];
 

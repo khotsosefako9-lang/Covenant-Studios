@@ -164,3 +164,36 @@ export function sameSite(a: URL, b: URL): boolean {
 
 export const SA_PHONE = /(?:\+27|\b0)[\s-]?\(?\d{2}\)?[\s-]?\d{3}[\s-]?\d{4}\b/;
 export const EMAIL = /\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b/i;
+
+/**
+ * Parsed JSON-LD blocks: every object found (graphs and nested values flattened into a list
+ * of top-level items). Blocks that do not parse are counted, never guessed at.
+ */
+export function jsonLd(doc: PageDoc): { items: unknown[]; unparseable: number } {
+  const items: unknown[] = [];
+  let unparseable = 0;
+  for (const el of doc.$("script[type='application/ld+json' i]").toArray() as Element[]) {
+    const raw = doc.$(el).text().trim();
+    if (!raw) continue;
+    try {
+      const v: unknown = JSON.parse(raw);
+      const top = Array.isArray(v) ? v : [v];
+      for (const item of top) {
+        const graph = item && typeof item === "object" ? (item as Record<string, unknown>)["@graph"] : undefined;
+        if (Array.isArray(graph)) items.push(...graph);
+        else items.push(item);
+      }
+    } catch {
+      unparseable++;
+    }
+  }
+  return { items, unparseable };
+}
+
+/** schema.org @type values of a JSON-LD node, as plain names ("LocalBusiness", not a URL). */
+export function ldTypes(node: unknown): string[] {
+  if (!node || typeof node !== "object") return [];
+  const t = (node as Record<string, unknown>)["@type"];
+  const list = Array.isArray(t) ? t : t === undefined ? [] : [t];
+  return list.filter((x): x is string => typeof x === "string").map((x) => x.replace(/^.*[/#]/, ""));
+}

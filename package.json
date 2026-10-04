@@ -25,7 +25,9 @@
     "quality": "tsx src/cli/quality.ts",
     "test:controls": "vitest run tests/audit/controls.test.ts tests/audit/severity-pins.test.ts",
     "prebuild": "npm run -s test:controls",
-    "signals": "tsx src/cli/signals.ts"
+    "signals": "tsx src/cli/signals.ts",
+    "opportunities": "tsx src/cli/opportunities.ts",
+    "thresholds": "tsx src/cli/thresholds.ts"
   },
   "dependencies": {
     "cheerio": "^1.2.0",

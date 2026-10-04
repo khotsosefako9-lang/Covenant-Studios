@@ -26,7 +26,7 @@ try {
     if (!v.signals.length) console.log("No active signals.");
     for (const x of v.signals) console.log(`  ${x.typeKey} (${x.detectedBy}) strength ${x.strength} → ${x.strengthNow} now, observed ${x.observedAt.toISOString().slice(0, 10)}`);
     for (const axis of ["intent", "opportunity"] as const) {
-      console.log(`${axis.toUpperCase()}: ${v.axes[axis].map((c) => `${c.typeKey} ${c.strength.toFixed(2)} (${c.basis})`).join("; ") || "none"}`);
+      console.log(`${axis.toUpperCase()}: ${v.axes[axis].map((c) => `${c.typeKey} ${c.strength.toFixed(2)}`).join("; ") || "none"}`);
     }
   } else if (command === "add" && id && values.type && values.strength && values.basis && values.by) {
     const r = await recordOperatorSignal(db, { companyId: id, typeKey: values.type, strength: Number(values.strength), basis: values.basis, actor: values.by });

@@ -484,7 +484,7 @@ describe.skipIf(!adminUrl)("M0 schema against real PostgreSQL", () => {
       const insert = (svc: string) =>
         idOf("covenant_services", svc).then((sid) =>
           pool.query(
-            `insert into opportunities (company_id, opportunity_type_id, covenant_service_id, rank, rationale, inference_rule) values ($1, $2, $3, 1, 'r', 'rule')`,
+            `insert into opportunities (company_id, opportunity_type_id, covenant_service_id, rank, relevance, confidence, rationale, inference_rule) values ($1, $2, $3, 1, 0.5, 0.4, 'r', 'rule')`,
             [c, rfq, sid],
           ),
         );

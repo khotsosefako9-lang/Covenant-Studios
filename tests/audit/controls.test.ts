@@ -6,16 +6,62 @@ import { SEVERITY_RANK } from "@/audit/types";
 import { triage } from "@/audit/shell";
 import { ctxFor, fixture, run } from "./helpers";
 
+// Capacity results (Phase 9). Controls firing here is expected and correct: these record
+// operating scale, not weakness. Pinned so that any change in what they fire on is reviewed.
+const ABSENT_ALL = {
+  "capacity.careers_page": "ABSENT",
+  "capacity.multiple_locations": "INDETERMINATE",
+  "capacity.online_shop": "ABSENT",
+  "capacity.client_logo_wall": "ABSENT",
+  "capacity.sponsor_section": "ABSENT",
+  "capacity.accreditation": "ABSENT",
+};
+
 const CONTROLS = [
-  { file: "plumber.html", url: "https://bayplumbing.co.za/", name: "Bay Plumbing", info: [] as string[] },
-  { file: "industrial.html", url: "https://ecsafety.co.za/", name: "EC Safety Supply", info: ["conv.whatsapp_link", "conv.pricing_info"] },
-  { file: "rugby.html", url: "https://ecrugby.co.za/", name: "Eastern Cape Rugby Union", info: ["conv.whatsapp_link"] },
-  { file: "lawfirm.html", url: "https://mbekipartners.co.za/", name: "Mbeki & Partners", info: ["conv.whatsapp_link", "conv.pricing_info", "content.social_links"] },
-  { file: "nextjs-ssr.html", url: "https://karooleather.co.za/", name: "Karoo Leather Goods", info: [] },
-  { file: "wordpress.html", url: "https://reelcoast.co.za/", name: "Reel Coast Studios", info: ["conv.whatsapp_link"] },
+  {
+    file: "plumber.html",
+    url: "https://bayplumbing.co.za/",
+    name: "Bay Plumbing",
+    info: [] as string[],
+    // One PostalAddress in JSON-LD: a single location.
+    capacity: { ...ABSENT_ALL, "capacity.multiple_locations": "ABSENT" },
+  },
+  {
+    file: "industrial.html",
+    url: "https://ecsafety.co.za/",
+    name: "EC Safety Supply",
+    info: ["conv.whatsapp_link", "conv.pricing_info"],
+    // "Trusted by" with two logos is not a wall; "SABS-approved" is a product approval, not a membership.
+    capacity: ABSENT_ALL,
+  },
+  {
+    file: "rugby.html",
+    url: "https://ecrugby.co.za/",
+    name: "Eastern Cape Rugby Union",
+    info: ["conv.whatsapp_link"],
+    // An "Our sponsors" heading and a /sponsors/ link, but no sponsor named on the page.
+    capacity: { ...ABSENT_ALL, "capacity.sponsor_section": "INDETERMINATE" },
+  },
+  {
+    file: "lawfirm.html",
+    url: "https://mbekipartners.co.za/",
+    name: "Mbeki & Partners",
+    info: ["conv.whatsapp_link", "conv.pricing_info", "content.social_links"],
+    // "members of the Legal Practice Council". The firm's own name ("& Partners") is not a partner section.
+    capacity: { ...ABSENT_ALL, "capacity.accreditation": "PRESENT" },
+  },
+  {
+    file: "nextjs-ssr.html",
+    url: "https://karooleather.co.za/",
+    name: "Karoo Leather Goods",
+    info: [],
+    // A /shop link, not read; no cart on the homepage.
+    capacity: { ...ABSENT_ALL, "capacity.online_shop": "INDETERMINATE" },
+  },
+  { file: "wordpress.html", url: "https://reelcoast.co.za/", name: "Reel Coast Studios", info: ["conv.whatsapp_link"], capacity: ABSENT_ALL },
 ];
 
-describe.each(CONTROLS)("control: $file", ({ file, url, name, info }) => {
+describe.each(CONTROLS)("control: $file", ({ file, url, name, info, capacity }) => {
   const html = fixture(`controls/${file}`);
   const results = run(html, { url, companyName: name });
 
@@ -37,6 +83,11 @@ describe.each(CONTROLS)("control: $file", ({ file, url, name, info }) => {
   it("raises only the expected info-level observations", () => {
     const observed = results.filter((r) => r.result.status === "FAIL").map((r) => r.check.key).sort();
     expect(observed).toEqual([...info].sort());
+  });
+
+  it("records exactly the pinned capacity results, none of them a FAIL", () => {
+    const observed = Object.fromEntries(results.filter((r) => r.check.category === "capacity").map((r) => [r.check.key, r.result.status]));
+    expect(observed).toEqual(capacity);
   });
 
   it("has no check errors", () => {

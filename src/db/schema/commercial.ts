@@ -1,6 +1,6 @@
 // finding → signal → opportunity type → Covenant service, as stored interpretations.
 import { sql } from "drizzle-orm";
-import { check, index, numeric, pgTable, primaryKey, smallint, text, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { check, index, jsonb, numeric, pgTable, primaryKey, smallint, text, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { auditFindings } from "./audit";
 import { id, timestamps, tstz } from "./common";
 import { covenantServices, opportunityTypes, signalTypes } from "./config";
@@ -25,6 +25,8 @@ export const signals = pgTable(
     detectedBy: signalDetectedBy("detected_by").notNull(),
     // Rule key for detected_by = rule; operator name for detected_by = operator.
     detectorRef: text("detector_ref").notNull(),
+    // The detector's resolved parameters when it produced this signal (null for operator signals).
+    detectorParams: jsonb("detector_params"),
     status: signalStatus("status").notNull().default("active"),
     ...timestamps(),
   },
@@ -79,7 +81,11 @@ export const opportunities = pgTable(
     // Chosen service from the type's configured mapping. Validated by trigger.
     covenantServiceId: uuid("covenant_service_id").references(() => covenantServices.id, { onDelete: "restrict" }),
     rank: smallint("rank").notNull(),
+    // How strongly the supporting signals point at this type (noisy-or of their decayed strengths).
     relevance: numeric("relevance", { precision: 4, scale: 3 }),
+    // How far the inference can be trusted: the INFERRED verifiability factor times the
+    // strength-weighted confidence of what it rests on (Phase 9).
+    confidence: numeric("confidence", { precision: 4, scale: 3 }),
     claimType: claimType("claim_type").notNull().default("INFERRED"),
     rationale: text("rationale").notNull(),
     inferenceRule: text("inference_rule").notNull(),
@@ -92,6 +98,9 @@ export const opportunities = pgTable(
     check("opportunities_rank", sql`${t.rank} >= 1`),
     check("opportunities_relevance_range", sql`${t.relevance} is null or ${t.relevance} between 0 and 1`),
     check("opportunities_interpretation", sql`${t.claimType} in ('INFERRED', 'REPORTED')`),
+    check("opportunities_confidence_range", sql`${t.confidence} is null or ${t.confidence} between 0 and 1`),
+    check("opportunities_inferred_scored", sql`${t.claimType} <> 'INFERRED' or (${t.relevance} is not null and ${t.confidence} is not null)`),
+    index("opportunities_current").on(t.companyId).where(sql`${t.supersededAt} is null`),
   ],
 );
 

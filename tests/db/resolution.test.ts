@@ -113,8 +113,8 @@ async function richCompany(domain: string, name: string) {
   await pool.query(`insert into signal_findings (signal_id, audit_finding_id) values ($1, $2)`, [signal, finding]);
   const opp = (
     await one<{ id: string }>(
-      `insert into opportunities (company_id, opportunity_type_id, covenant_service_id, rank, rationale, inference_rule)
-       values ($1, $2, $3, 1, 'No CTA suggests conversion friction', 'cta_absent => conversion_landing_page') returning id`,
+      `insert into opportunities (company_id, opportunity_type_id, covenant_service_id, rank, relevance, confidence, rationale, inference_rule)
+       values ($1, $2, $3, 1, 0.5, 0.4, 'No CTA suggests conversion friction', 'cta_absent => conversion_landing_page') returning id`,
       [c, await idOf("opportunity_types", "conversion_landing_page"), await idOf("covenant_services", "campaign_conversion_page")],
     )
   ).id;

@@ -1,6 +1,6 @@
 // Deterministic website audits. No AI writes to these tables.
 import { sql } from "drizzle-orm";
-import { boolean, check, index, numeric, pgTable, primaryKey, text, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { boolean, check, index, jsonb, numeric, pgTable, primaryKey, text, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { id, timestamps, tstz } from "./common";
 import { auditBlockReason, auditCheckCategory, auditStatus, configOrigin, findingSeverity, findingStatus, findingVerdict } from "./enums";
 import { companies } from "./identity";
@@ -17,6 +17,9 @@ export const auditChecks = pgTable("audit_checks", {
   enabled: boolean("enabled").notNull().default(true),
   description: text("description").notNull(),
   evidenceRecorded: text("evidence_recorded").notNull(),
+  // Thresholds (Phase 9), e.g. {"max_html_bytes": 1000000}. Validated against the bounds the
+  // check declares in code; the seed fills code defaults and never overwrites an operator's row.
+  params: jsonb("params"),
   configOrigin: configOrigin("config_origin").notNull().default("documented"),
   ...timestamps(),
 });
@@ -32,6 +35,9 @@ export const audits = pgTable(
     status: auditStatus("status").notNull().default("QUEUED"),
     // Version of the deterministic check set, so findings from different sets are comparable.
     checkSetVersion: text("check_set_version").notNull(),
+    // The resolved threshold of every check as the audit ran it, so a finding can be
+    // reproduced after an operator changes a threshold.
+    checkParams: jsonb("check_params"),
     blockReason: auditBlockReason("block_reason"),
     // The retrieval that proved the block (e.g. robots.txt), kept as provenance.
     blockSourceRecordId: uuid("block_source_record_id").references(() => sourceRecords.id, { onDelete: "restrict" }),
@@ -86,6 +92,8 @@ export const auditFindings = pgTable(
     uniqueIndex("audit_findings_audit_check").on(t.auditId, t.checkKey),
     index("audit_findings_check_status").on(t.checkKey, t.status),
     check("audit_findings_fail_has_severity", sql`${t.status} <> 'FAIL' or ${t.severity} is not null`),
+    // Only a FAIL has a severity: a capacity marker is never a weakness.
+    check("audit_findings_severity_only_on_fail", sql`${t.severity} is null or ${t.status}::text = 'FAIL'`),
     check("audit_findings_confidence_range", sql`${t.confidence} between 0 and 1`),
   ],
 );

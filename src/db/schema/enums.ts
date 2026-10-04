@@ -95,7 +95,9 @@ export const auditStatus = pgEnum("audit_status", [
   "NO_CONTENT",
 ]);
 
-export const auditCheckCategory = pgEnum("audit_check_category", ["technical", "conversion", "content"]);
+// capacity (Phase 9): markers of operating scale. They feed commercial potential, never a
+// weakness and never Intent.
+export const auditCheckCategory = pgEnum("audit_check_category", ["technical", "conversion", "content", "capacity"]);
 
 export const auditBlockReason = pgEnum("audit_block_reason", [
   "robots_disallow",
@@ -106,12 +108,16 @@ export const auditBlockReason = pgEnum("audit_block_reason", [
 
 // INDETERMINATE is a first-class result: the page does not give a clear answer.
 // ERROR means the check itself threw; it is never shown as a finding about the site.
+// PRESENT/ABSENT are capacity-check results (Phase 9): a marker of operating scale was or
+// was not on the page. Neither is a weakness, and neither carries a severity.
 export const findingStatus = pgEnum("finding_status", [
   "PASS",
   "FAIL",
   "NOT_APPLICABLE",
   "INDETERMINATE",
   "ERROR",
+  "PRESENT",
+  "ABSENT",
 ]);
 
 export const findingSeverity = pgEnum("finding_severity", ["info", "low", "medium", "high"]);

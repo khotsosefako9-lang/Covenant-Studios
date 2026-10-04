@@ -75,9 +75,10 @@ export const conversionChecks: CheckDefinition[] = [
     category: "conversion",
     severity: "medium",
     version: V,
-    description: `PASS when an action link/button (quote, book, contact, call, shop, tel:/mailto:/WhatsApp) starts within the first ${FIRST_SCREEN_CHARS} characters of non-navigation text. Markup order, not rendered layout.`,
+    description: `PASS when an action link/button (quote, book, contact, call, shop, tel:/mailto:/WhatsApp) starts within the first first_screen_chars (default ${FIRST_SCREEN_CHARS}) characters of non-navigation text. Markup order, not rendered layout.`,
     evidenceRecorded: "The first action element found, its text, CSS path and text offset.",
-    run({ doc }) {
+    params: { first_screen_chars: { default: FIRST_SCREEN_CHARS, min: 300, max: 3000, integer: true, description: "Text offset that counts as the first screen" } },
+    run({ doc }, p) {
       const actions = actionElements(doc).filter((el) => {
         const href = hrefScheme(el);
         return href.startsWith("tel:") || href.startsWith("mailto:") || isWhatsApp(doc, el) || (doc.vocabularyReliable && CTA_WORDS.test(labelOf(doc, el)));
@@ -89,7 +90,7 @@ export const conversionChecks: CheckDefinition[] = [
         excerpt: excerptOf(doc.$, el),
         locator: `${pathOf(el)} (text offset ${doc.offsets.get(el) ?? "?"})`,
       });
-      if (first && (doc.offsets.get(first) ?? Infinity) < FIRST_SCREEN_CHARS) return pass("An action is offered at the top of the page", 0.75, [ev(first)]);
+      if (first && (doc.offsets.get(first) ?? Infinity) < (p.first_screen_chars as number)) return pass("An action is offered at the top of the page", 0.75, [ev(first)]);
       if (!doc.vocabularyReliable) return notEnglish(doc.lang);
       if (first) {
         return fail(`The first call to action appears ${doc.offsets.get(first)} characters into the page, not in the first screen`, 0.6, [ev(first)]);
@@ -185,14 +186,15 @@ export const conversionChecks: CheckDefinition[] = [
     category: "conversion",
     severity: "medium",
     version: V,
-    description: "Counts fields marked required (required / aria-required) in the first enquiry form; FAIL above 6.",
+    description: "Counts fields marked required (required / aria-required) in the first enquiry form; FAIL above max_required_fields (default 6).",
     evidenceRecorded: "The required-field count and the form's location.",
-    run({ doc }) {
+    params: { max_required_fields: { default: 6, min: 3, max: 20, integer: true, description: "FAIL when the first enquiry form requires more fields than this" } },
+    run({ doc }, p) {
       const form = enquiryForms(doc)[0];
       if (!form) return embeddedForms(doc).length ? indeterminate("The form is embedded from another site; its fields cannot be read") : notApplicable("No enquiry form");
       const n = requiredCount(doc, form);
       const ev = [{ claim: "Required fields in the enquiry form", value: String(n), locator: pathOf(form) }];
-      if (n > 6) return fail(`The enquiry form requires ${n} fields`, 0.85, ev);
+      if (n > (p.max_required_fields as number)) return fail(`The enquiry form requires ${n} fields`, 0.85, ev);
       return pass(`The enquiry form requires ${n} field(s)`, 0.8, ev);
     },
   },
@@ -202,14 +204,15 @@ export const conversionChecks: CheckDefinition[] = [
     category: "conversion",
     severity: "low",
     version: V,
-    description: "Text offset of the first enquiry form; FAIL beyond 2,500 characters. Markup order only, so confidence is moderate.",
+    description: "Text offset of the first enquiry form; FAIL beyond max_offset_chars (default 2,500 characters). Markup order only, so confidence is moderate.",
     evidenceRecorded: "The form's text offset and location.",
-    run({ doc }) {
+    params: { max_offset_chars: { default: 2500, min: 500, max: 20_000, integer: true, description: "FAIL when the first enquiry form starts further than this many characters into the page" } },
+    run({ doc }, p) {
       const form = enquiryForms(doc)[0];
       if (!form) return notApplicable("No enquiry form");
       const off = doc.offsets.get(form) ?? 0;
       const ev = [{ claim: "Enquiry form text offset", value: String(off), locator: pathOf(form) }];
-      if (off > 2500) return fail(`The enquiry form starts ${off} characters into the page`, 0.5, ev);
+      if (off > (p.max_offset_chars as number)) return fail(`The enquiry form starts ${off} characters into the page`, 0.5, ev);
       return pass("The enquiry form is near the top of the page", 0.5, ev);
     },
   },

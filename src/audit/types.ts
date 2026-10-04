@@ -1,10 +1,16 @@
 // Shapes shared by the checks. Checks are pure functions of an AuditContext: everything
 // they need was fetched beforehand by the fetch layer, so they can be tested on fixtures.
+import type { Params, ParamSpecs } from "@/core/params";
 import type { PageDoc } from "./document";
 
-export type CheckStatus = "PASS" | "FAIL" | "NOT_APPLICABLE" | "INDETERMINATE";
+/**
+ * PASS/FAIL judge a website weakness. PRESENT/ABSENT record whether a marker of operating
+ * scale is on the page (capacity checks only): absence is an observation, not a failure.
+ */
+export type CheckStatus = "PASS" | "FAIL" | "PRESENT" | "ABSENT" | "NOT_APPLICABLE" | "INDETERMINATE";
 export type Severity = "info" | "low" | "medium" | "high";
-export type Category = "technical" | "conversion" | "content";
+/** capacity: evidence of operating scale (feeds commercial potential), never a weakness. */
+export type Category = "technical" | "conversion" | "content" | "capacity";
 
 /** The result of one extra request made for the audit (http variant, sitemap, link, PDF, profile). */
 export interface Probe {
@@ -66,7 +72,9 @@ export interface CheckDefinition {
   version: string;
   description: string;
   evidenceRecorded: string;
-  run(ctx: AuditContext): CheckResult;
+  /** Thresholds, configurable per check (audit_checks.params); defaults live here. */
+  params?: ParamSpecs;
+  run(ctx: AuditContext, params: Params): CheckResult;
 }
 
 export const SEVERITY_RANK: Record<Severity, number> = { info: 0, low: 1, medium: 2, high: 3 };

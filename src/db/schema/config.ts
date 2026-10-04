@@ -116,20 +116,25 @@ export const signalTypes = pgTable(
     kind: signalKind("kind").notNull(),
     // Null = not yet classified by the source documents.
     axis: scoreAxis("axis"),
-    // web_underperformance: counts toward intent only with an independent commercial signal.
-    intentRequiresIndependentSignal: boolean("intent_requires_independent_signal").notNull().default(false),
     // procurement_scorecard: may only be raised by a human operator. Enforced by trigger.
     humanOnly: boolean("human_only").notNull().default(false),
     // Linear decay to zero over this many days. Null = not documented.
     decayDays: integer("decay_days"),
     detectableFrom: text("detectable_from"),
     group: text("group"),
-    // Covers axis and decay_days, which are operator-adjustable defaults.
+    // Strengths and thresholds of the automated detector for this type (Phase 9), validated
+    // against the bounds the detector declares in code. Null for types no detector produces.
+    detectorParams: jsonb("detector_params"),
+    // Covers axis, decay_days and detector_params, which are operator-adjustable defaults.
     configOrigin: configOrigin("config_origin").notNull().default("documented"),
     active: boolean("active").notNull().default(true),
     ...timestamps(),
   },
-  (t) => [check("signal_types_decay_positive", sql`${t.decayDays} is null or ${t.decayDays} > 0`)],
+  (t) => [
+    check("signal_types_decay_positive", sql`${t.decayDays} is null or ${t.decayDays} > 0`),
+    // Phase 9: web_underperformance is Opportunity only, always; no operator edit moves it.
+    check("signal_types_web_underperformance_opportunity", sql`${t.key} <> 'web_underperformance' or ${t.axis} = 'opportunity'`),
+  ],
 );
 
 // signal_type → opportunity_type. Completes finding → signal → opportunity type → service.
@@ -142,10 +147,16 @@ export const signalTypeOpportunityTypes = pgTable(
     opportunityTypeId: uuid("opportunity_type_id")
       .notNull()
       .references(() => opportunityTypes.id, { onDelete: "cascade" }),
+    // 1 = the type this signal points to most directly; later preferences count for less in
+    // opportunity derivation (opportunity_derivation.secondary_mapping_weight).
+    preference: smallint("preference").notNull().default(1),
     configOrigin: configOrigin("config_origin").notNull().default("documented"),
     ...timestamps(),
   },
-  (t) => [primaryKey({ columns: [t.signalTypeId, t.opportunityTypeId] })],
+  (t) => [
+    primaryKey({ columns: [t.signalTypeId, t.opportunityTypeId] }),
+    check("signal_type_opportunity_types_preference", sql`${t.preference} >= 1`),
+  ],
 );
 
 export const icpSegments = pgTable("icp_segments", {

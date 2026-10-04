@@ -12,7 +12,6 @@ const SA_PLACES =
   /\b(gqeberha|port elizabeth|nelson mandela bay|east london|kariega|uitenhage|makhanda|grahamstown|mthatha|eastern cape|western cape|northern cape|free state|kwazulu-natal|kzn|gauteng|limpopo|mpumalanga|north west|cape town|johannesburg|joburg|pretoria|tshwane|durban|bloemfontein|polokwane|mbombela|nelspruit|kimberley|george|knysna|jeffreys bay|stellenbosch|paarl|centurion|sandton|midrand|soweto|pietermaritzburg|rustenburg|south africa)\b/i;
 const STREET = /\b\d{1,5}\s+[a-z][a-z'. -]{1,40}\s(street|st|road|rd|avenue|ave|drive|dr|crescent|lane|close|way|boulevard|blvd|place|terrace)\b/i;
 const SOCIAL_HOSTS = /^(www\.|m\.|web\.)?(facebook\.com|fb\.com|instagram\.com|linkedin\.com|x\.com|twitter\.com|tiktok\.com|youtube\.com|youtu\.be)$/i;
-const CATALOGUE_LIMIT_BYTES = 10 * 1024 * 1024;
 
 const mb = (n: number) => `${(n / 1024 / 1024).toFixed(1)} MB`;
 
@@ -131,16 +130,17 @@ export const contentChecks: CheckDefinition[] = [
     category: "content",
     severity: "low",
     version: V,
-    description: "FAIL when the latest copyright year is two or more years before retrieval. A lagging year is a weak staleness signal, so confidence is low.",
+    description: "FAIL when the latest copyright year is min_lag_years (default 2) or more years before retrieval. A lagging year is a weak staleness signal, so confidence is low.",
     evidenceRecorded: "The copyright line and its latest year.",
-    run({ doc, fetchedAt }) {
+    params: { min_lag_years: { default: 2, min: 1, max: 10, integer: true, description: "FAIL when the copyright year lags retrieval by at least this many years" } },
+    run({ doc, fetchedAt }, p) {
       const m = [...doc.text.matchAll(/(?:©|\(c\)|copyright)\s*(?:\d{4}\s*[-–]\s*)?(\d{4})/gi)];
       if (!m.length) return notApplicable("No copyright year on the page");
       const year = Math.max(...m.map((x) => Number(x[1])));
       const now = fetchedAt.getUTCFullYear();
       const ev = [{ claim: "Copyright line", value: String(year), excerpt: m[0]?.[0] ?? null, locator: "body text" }];
       if (year > now) return indeterminate(`Copyright year ${year} is after the retrieval date`, ev);
-      if (now - year >= 2) return fail(`The copyright year is ${year}`, 0.5, ev);
+      if (now - year >= (p.min_lag_years as number)) return fail(`The copyright year is ${year}`, 0.5, ev);
       return pass(`Copyright year ${year} is current`, 0.6, ev);
     },
   },
@@ -150,14 +150,15 @@ export const contentChecks: CheckDefinition[] = [
     category: "content",
     severity: "low",
     version: V,
-    description: "Uses only machine-readable dates (<time datetime>, published/modified meta, JSON-LD). FAIL when the newest is over 24 months before retrieval.",
+    description: "Uses only machine-readable dates (<time datetime>, published/modified meta, JSON-LD). FAIL when the newest is over max_age_months (default 24) before retrieval.",
     evidenceRecorded: "The newest date found and where.",
-    run({ doc, fetchedAt }) {
+    params: { max_age_months: { default: 24, min: 6, max: 120, integer: true, description: "FAIL when the newest machine-readable date is older than this many months" } },
+    run({ doc, fetchedAt }, p) {
       const latest = latestDate(doc);
       if (!latest) return notApplicable("The page carries no machine-readable dates");
       const ev = [{ claim: "Most recent machine-readable date", value: latest.date.toISOString().slice(0, 10), excerpt: latest.source, locator: latest.locator }];
       const months = (fetchedAt.getTime() - latest.date.getTime()) / (30.44 * 24 * 3600 * 1000);
-      if (months > 24) return fail(`The most recent dated content is from ${latest.date.toISOString().slice(0, 10)}`, 0.7, ev);
+      if (months > (p.max_age_months as number)) return fail(`The most recent dated content is from ${latest.date.toISOString().slice(0, 10)}`, 0.7, ev);
       return pass("Recently dated content present", 0.75, ev);
     },
   },
@@ -167,12 +168,13 @@ export const contentChecks: CheckDefinition[] = [
     category: "content",
     severity: "medium",
     version: V,
-    description: `Requests up to 3 linked PDFs (catalogues first) without downloading them; FAIL when a declared size exceeds ${CATALOGUE_LIMIT_BYTES / 1024 / 1024} MB.`,
+    description: "Requests up to 3 linked PDFs (catalogues first) without downloading them; FAIL when a declared size exceeds max_pdf_bytes (default 10 MB).",
     evidenceRecorded: "Each PDF's URL, link text and declared Content-Length.",
-    run(ctx) {
+    params: { max_pdf_bytes: { default: 10 * 1024 * 1024, min: 1024 * 1024, max: 500 * 1024 * 1024, integer: true, description: "FAIL when a linked PDF declares more bytes than this" } },
+    run(ctx, params) {
       if (!ctx.pdfs.length) return notApplicable("No PDF links on the page");
       const ev = ctx.pdfs.map((p) => probeEvidence(p, "Linked PDF"));
-      const heavy = ctx.pdfs.filter((p) => p.declaredLength !== null && p.declaredLength > CATALOGUE_LIMIT_BYTES);
+      const heavy = ctx.pdfs.filter((p) => p.declaredLength !== null && p.declaredLength > (params.max_pdf_bytes as number));
       if (heavy.length) return fail(`A linked PDF is ${mb(Math.max(...heavy.map((p) => p.declaredLength ?? 0)))}`, 0.9, ev);
       if (ctx.pdfs.every((p) => p.declaredLength !== null)) return pass("Linked PDFs are a manageable size", 0.85, ev);
       return indeterminate("Some linked PDFs did not declare a size or could not be requested", ev);

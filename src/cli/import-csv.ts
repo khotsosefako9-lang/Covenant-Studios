@@ -1,4 +1,5 @@
 // npm run import:csv -- <file.csv> --by "<operator name>"
+import "./stdout";
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 import { parseArgs } from "node:util";

@@ -1,5 +1,6 @@
 // npm run audit -- <companyId> [--url <url>]
 // Runs one deterministic audit and prints its findings, most severe first.
+import "./stdout";
 import { parseArgs } from "node:util";
 import { eq } from "drizzle-orm";
 import { runAudit } from "../audit/run";

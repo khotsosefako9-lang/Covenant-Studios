@@ -1,6 +1,6 @@
 // Runs one audit: fetch through the fetch layer, triage, probe, evaluate, persist.
 // This file does no network I/O of its own; every request goes through FetchRun.
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { SHARED_PLATFORM_HOSTS } from "@/core/identity/domain";
 import { inCompanyCluster } from "@/db/company-scope";
@@ -180,6 +180,16 @@ export async function runAudit(
     );
     const results = evaluate(ctx, enabled);
 
+    // Each claim is observed when the retrieval it cites happened: a probe made after the
+    // homepage must not be stamped with the homepage's time.
+    const cited = [...new Set(results.flatMap((r) => r.result.evidence.map((e) => e.sourceRecordId).filter((id): id is string => !!id)))];
+    const retrievedAt = new Map<string, Date>([[page.id, page.fetchedAt]]);
+    if (cited.length) {
+      for (const r of await db.select({ id: s.sourceRecords.id, at: s.sourceRecords.fetchedAt }).from(s.sourceRecords).where(inArray(s.sourceRecords.id, cited))) {
+        retrievedAt.set(r.id, r.at);
+      }
+    }
+
     await db.transaction(async (tx) => {
       for (const { check, result, severity } of results) {
         const [finding] = await tx
@@ -199,11 +209,12 @@ export async function runAudit(
         for (const item of result.evidence) {
           // null = observed in a request that was never made: there is nothing to cite.
           if (item.sourceRecordId === null) continue;
+          const sourceRecordId = item.sourceRecordId ?? page.id;
           const [ev] = await tx
             .insert(s.evidence)
             .values({
               companyId: company.id,
-              sourceRecordId: item.sourceRecordId ?? page.id,
+              sourceRecordId,
               producer: "audit",
               claimKey: `audit.${check.key}`,
               claim: item.claim,
@@ -212,7 +223,7 @@ export async function runAudit(
               excerpt: item.excerpt ?? null,
               locator: item.locator,
               confidence: String(result.confidence),
-              observedAt: page.fetchedAt,
+              observedAt: retrievedAt.get(sourceRecordId) ?? page.fetchedAt,
             })
             .returning({ id: s.evidence.id });
           if (ev) await tx.insert(s.auditFindingEvidence).values({ auditFindingId: finding.id, evidenceId: ev.id }).onConflictDoNothing();

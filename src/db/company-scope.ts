@@ -2,9 +2,10 @@
 // rows, so reading by companies.id alone silently misses everything a cluster absorbed.
 // Reads go through the identity cluster instead: any member id resolves to the root
 // and then to every member.
-import { type SQL, sql } from "drizzle-orm";
+import { type SQL, eq, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
+import { decayedStrength } from "../core/freshness";
 import * as s from "./schema/index";
 
 type Db = NodePgDatabase<typeof s>;
@@ -51,4 +52,23 @@ export async function getCompanyFindings(db: Db, companyId: string) {
 /** All signals for a business across its identity cluster. */
 export async function getCompanySignals(db: Db, companyId: string) {
   return db.select().from(s.signals).where(inCompanyCluster(s.signals.companyId, companyId)).orderBy(s.signals.observedAt);
+}
+
+/**
+ * A business's signals with their strength now: decayed at read time from observed_at
+ * over the signal type's decay_days. Decay is never stored.
+ */
+export async function getCompanySignalsNow(db: Db, companyId: string, now = new Date()) {
+  const rows = await db
+    .select({ signal: s.signals, typeKey: s.signalTypes.key, decayDays: s.signalTypes.decayDays })
+    .from(s.signals)
+    .innerJoin(s.signalTypes, eq(s.signalTypes.id, s.signals.signalTypeId))
+    .where(inCompanyCluster(s.signals.companyId, companyId))
+    .orderBy(s.signals.observedAt);
+  return rows.map((r) => ({
+    ...r.signal,
+    typeKey: r.typeKey,
+    decayDays: r.decayDays,
+    strengthNow: decayedStrength({ strength: Number(r.signal.strength), observedAt: r.signal.observedAt, decayDays: r.decayDays, now }),
+  }));
 }

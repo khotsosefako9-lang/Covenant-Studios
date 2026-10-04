@@ -1,4 +1,5 @@
 // npm run company:add -- --name "Acme Supplies" [--website acme.co.za] [--phone ...] --by "<operator name>"
+import "./stdout";
 import { parseArgs } from "node:util";
 import { COMPANY_FIELDS, type CompanyInput } from "../core/ingest/validate";
 import { getDb, getPool } from "../db/client";

@@ -4,6 +4,7 @@
 // npm run duplicates -- defer   <candidateId> --by "<operator>" --reason "<why>"
 // npm run duplicates -- unmerge <mergeId>     --by "<operator>" --reason "<why>"
 // npm run duplicates -- show    <companyId>
+import "./stdout";
 import { parseArgs } from "node:util";
 import { getDb, getPool } from "../db/client";
 import { confirmDuplicate, deferDuplicate, getIdentityCluster, listCandidates, rejectDuplicate, unmerge } from "../identity/resolution";

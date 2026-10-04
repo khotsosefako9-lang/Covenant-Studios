@@ -112,3 +112,12 @@ describe("the audit layer is deterministic and claims only what a page shows", (
     expect(UNOBSERVABLE.test("No call-to-action link or button found on the page")).toBe(false);
   });
 });
+
+describe("claim types match their writers", () => {
+  it("only the audit writes VERIFIED and only ingest writes REPORTED; nothing writes INFERRED yet", () => {
+    const writes = src.flatMap((f) =>
+      [...stripComments(f.text).matchAll(/claimType:\s*"(VERIFIED|REPORTED|INFERRED|UNKNOWN)"/g)].map((m) => `${f.path}:${m[1]}`),
+    );
+    expect(writes.filter((w) => !w.startsWith("src/db/schema/")).sort()).toEqual(["src/audit/run.ts:VERIFIED", "src/ingest/companies.ts:REPORTED"]);
+  });
+});

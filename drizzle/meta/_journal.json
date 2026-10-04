@@ -43,6 +43,13 @@
       "when": 1791122180048,
       "tag": "0005_phase6_audit",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791123623354,
+      "tag": "0006_phase7_read_time_decay",
+      "breakpoints": true
     }
   ]
 }

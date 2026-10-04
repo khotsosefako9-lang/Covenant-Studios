@@ -2,6 +2,7 @@
 // npm run fetch -- pause  --by "<operator>"     halts all outbound fetching before the next request
 // npm run fetch -- resume --by "<operator>"
 // npm run fetch -- url <url> [--company <companyId>]
+import "./stdout";
 import { randomUUID } from "node:crypto";
 import { parseArgs } from "node:util";
 import { eq } from "drizzle-orm";

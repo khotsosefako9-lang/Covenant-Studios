@@ -483,6 +483,60 @@ architecture test scans every string in `src/audit` for such claims and fails th
 npm run audit -- <companyId> [--url <url>]
 ```
 
+## Phase 7 — evidence and provenance (verification)
+
+Mostly a verification phase. The storage built in Phase 2 held, and so did the writers from Phases 3
+and 6, with one exception found by the new invariants (below).
+
+### What was already true
+
+- An evidence row without a source record is refused by the database: `NOT NULL` plus a foreign key.
+  Deleting a cited source record is also refused, and evidence cannot be rewritten (Phase 2 trigger).
+  The provenance test asserts all three again.
+- Exactly two code paths write evidence, each with a fixed claim type: ingest writes `REPORTED`, the
+  audit writes `VERIFIED`. Nothing writes `INFERRED`. An architecture test now pins this.
+
+### What was wrong
+
+Audit evidence observed in a probe (sampled links, sitemap, PDFs, profiles) was stamped with the
+homepage's retrieval time, a few seconds before the request that observed it. The runner now stamps
+each evidence row with the retrieval time of the source record it cites. No stored data needed repair.
+
+### What was added
+
+- **"Where did this come from"**: `npm run provenance -- <evidence|finding|company> <id> [--claim <prefix>]`
+  prints the full chain:
+  - the claim, its value and excerpt, claim type, confidence, and its location in the document
+  - the evidence row
+  - the source record: URL or CSV file, retrieval time, outcome, User-Agent, robots record, content hash
+  - freshness against its refresh window
+  - the findings it supports
+
+  `src/provenance/chain.ts` is the API Phase 12 will render.
+- **Freshness at read time** (`src/core/freshness.ts`). It is computed from `observed_at` (or a later
+  `last_verified_at`) against the Phase 0 windows: website audit 90 days, contact channel 180, company
+  profile 180. It returns fresh or stale and the Phase 0 recency factor (1 inside the window, linearly
+  down to 0.4 at twice the window). Nothing about freshness is stored.
+- **Signal decay at read time.** Strength decays linearly to zero over the signal type's `decay_days`,
+  from `observed_at` (`getCompanySignalsNow`). The unused stored `signals.decays_at` column was dropped
+  (migration 0006).
+- **Data-quality invariants** (`src/quality/invariants.ts`). Run with `npm run quality` (exit code 1 on
+  any violation), or nightly by the worker (pg-boss schedule `data-quality`, 02:13 UTC, results recorded
+  in `system_events`).
+  - Phase 0: no evidence without a source record; one active company per domain; scores within 0–100;
+    confidences within 0–1; qualified leads scored after their latest audit; no fresh mark past its
+    window. The only stored freshness mark is a contact channel's `verified` state.
+  - Provenance: every cited source record is locatable; each writer's claim types; no `INFERRED` rows
+    yet; audit evidence is never observed before its retrieval; finding evidence belongs to the same
+    company cluster; every FAIL cites evidence; every completed audit names its page; every company name
+    is evidenced.
+  - The two outreach invariants report `not_applicable` until M3.
+  - Each invariant is proven by a test that corrupts the data and expects it to fire.
+- **Standing regression suite.** `npm run test:controls` runs the six-site control set and the severity
+  pins (`tests/audit/severity-pins.test.ts`). It runs automatically before `npm run build`, so a new
+  control finding at low or above, or any change to a check's severity, fails the build until the pin
+  is updated deliberately.
+
 ## Running locally
 
 Requires Node 22.12+ and PostgreSQL.
@@ -494,6 +548,8 @@ npm run db:setup            # apply migrations + idempotent configuration seed
 npm run dev                 # app on :3000, health at /api/health
 npm run worker              # background job worker
 npm run typecheck && npm test   # DB tests create and drop a throwaway database via DATABASE_URL
+npm run test:controls           # control set + severity pins (also runs before every build)
+npm run quality                 # data-quality invariants
 ```
 
 ## Deferred

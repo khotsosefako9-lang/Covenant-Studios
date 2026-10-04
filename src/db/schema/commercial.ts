@@ -18,10 +18,10 @@ export const signals = pgTable(
     signalTypeId: uuid("signal_type_id")
       .notNull()
       .references(() => signalTypes.id, { onDelete: "restrict" }),
-    // Strength at observation; decay is applied at read time from observed_at.
+    // Strength at observation. Decay is computed at read time from observed_at and the
+    // signal type's decay_days (src/core/freshness.ts); it is never stored.
     strength: numeric("strength", { precision: 4, scale: 3 }).notNull(),
     observedAt: tstz("observed_at").notNull(),
-    decaysAt: tstz("decays_at"),
     detectedBy: signalDetectedBy("detected_by").notNull(),
     // Rule key for detected_by = rule; operator name for detected_by = operator.
     detectorRef: text("detector_ref").notNull(),
@@ -31,7 +31,6 @@ export const signals = pgTable(
   (t) => [
     index("signals_company_type").on(t.companyId, t.signalTypeId, t.observedAt),
     check("signals_strength_range", sql`${t.strength} between 0 and 1`),
-    check("signals_decay_after_observed", sql`${t.decaysAt} is null or ${t.decaysAt} > ${t.observedAt}`),
   ],
 );
 

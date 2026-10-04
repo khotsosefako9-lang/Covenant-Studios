@@ -91,6 +91,30 @@ interface Attempt {
 
 const sha256 = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
 
+// Response headers worth keeping as provenance. Small and fixed: cookies and the like are never stored.
+const KEPT_HEADERS = [
+  "content-type",
+  "content-length",
+  "last-modified",
+  "etag",
+  "location",
+  "x-robots-tag",
+  "strict-transport-security",
+  "retry-after",
+  "server",
+] as const;
+
+function responseMeta(r: Extract<GetResult, { kind: "response" }>) {
+  const headers: Record<string, string> = {};
+  for (const h of KEPT_HEADERS) if (r.headers[h] !== undefined) headers[h] = r.headers[h] as string;
+  const declared = Number(r.headers["content-length"]);
+  return {
+    responseMs: r.responseMs,
+    declaredLength: Number.isFinite(declared) && r.headers["content-length"] !== undefined ? declared : null,
+    responseHeaders: headers,
+  };
+}
+
 export function hostKey(u: URL): string {
   return u.port ? `${u.hostname}:${u.port}` : u.hostname;
 }
@@ -330,7 +354,7 @@ export class FetchRun {
         redirectChain: chain.length > 1 ? chain : null,
         robotsSourceRecordId: robots.recordId,
         traceId: opts.traceId ?? null,
-      };
+      } as Partial<typeof s.sourceRecords.$inferInsert> & { url: string; host: string; purpose: "page"; fetchedAt?: Date };
       const finish = async (values: Partial<typeof s.sourceRecords.$inferInsert> & { fetchOutcome: Outcome }) => {
         const id = await this.record({ ...base, fetchedAt: fetchedAt(), attempts, ...values });
         return {
@@ -376,6 +400,7 @@ export class FetchRun {
       attempts += a.attempts;
       const r = a.result;
       if (r.kind === "error") return finish({ fetchOutcome: r.outcome, errorDetail: r.detail });
+      Object.assign(base, responseMeta(r));
 
       const status = r.status;
       if (status >= 300 && status < 400 && status !== 304) {

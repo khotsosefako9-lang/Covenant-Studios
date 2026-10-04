@@ -19,10 +19,12 @@
     "import:csv": "tsx src/cli/import-csv.ts",
     "company:add": "tsx src/cli/add-company.ts",
     "duplicates": "tsx src/cli/duplicates.ts",
-    "fetch": "tsx src/cli/fetch.ts"
+    "fetch": "tsx src/cli/fetch.ts",
+    "audit": "tsx src/cli/audit.ts"
   },
   "dependencies": {
     "cheerio": "^1.2.0",
+    "domhandler": "^5.0.3",
     "drizzle-orm": "^0.45.3",
     "next": "^16.3.8",
     "pg": "^8.23.1",

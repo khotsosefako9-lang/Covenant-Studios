@@ -7,6 +7,7 @@ import {
   check,
   index,
   integer,
+  jsonb,
   numeric,
   pgTable,
   text,
@@ -66,6 +67,11 @@ export const sourceRecords = pgTable(
     // The robots.txt record that allowed or blocked this request.
     robotsSourceRecordId: uuid("robots_source_record_id").references((): AnyPgColumn => sourceRecords.id, { onDelete: "restrict" }),
     errorDetail: text("error_detail"),
+    responseMs: integer("response_ms"),
+    // Content-Length as declared by the server, recorded even when the body was not downloaded.
+    declaredLength: bigint("declared_length", { mode: "number" }),
+    // A fixed allowlist of response headers (see src/fetch/fetcher.ts), never cookies.
+    responseHeaders: jsonb("response_headers"),
     // Operator name for REPORTED operator statements and manual entry.
     attributedTo: text("attributed_to"),
     traceId: text("trace_id"),

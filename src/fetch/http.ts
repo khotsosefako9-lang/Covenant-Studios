@@ -34,6 +34,8 @@ export type GetResult =
       /** Present for 2xx responses that passed the checks below. */
       body: Uint8Array | null;
       truncated: boolean;
+      /** Milliseconds from sending the request to receiving the response headers. */
+      responseMs: number;
       /** Set when the response is a terminal outcome other than a usable body. */
       outcome: Outcome | null;
       detail: string | null;
@@ -61,6 +63,7 @@ export async function httpGet(url: string, opts: GetOptions): Promise<GetResult>
   if (opts.conditional?.lastModified) headers["if-modified-since"] = opts.conditional.lastModified;
 
   let res: Dispatcher.ResponseData;
+  const started = performance.now();
   try {
     res = await request(url, {
       method: "GET",
@@ -73,6 +76,7 @@ export async function httpGet(url: string, opts: GetOptions): Promise<GetResult>
     return classifyError(e);
   }
 
+  const responseMs = Math.round(performance.now() - started);
   const flat: Record<string, string> = {};
   for (const [k, v] of Object.entries(res.headers)) {
     const s = header(res.headers, k);
@@ -84,6 +88,7 @@ export async function httpGet(url: string, opts: GetOptions): Promise<GetResult>
     headers: flat,
     body,
     truncated,
+    responseMs,
     outcome,
     detail,
   });

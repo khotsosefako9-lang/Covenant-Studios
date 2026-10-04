@@ -4,6 +4,7 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { and, eq, inArray, isNull, ne, notInArray, or, sql } from "drizzle-orm";
 import * as s from "./schema/index";
+import { ALL_CHECKS } from "../audit/registry";
 import * as data from "./seed-data";
 import { parseSetting } from "./validation";
 
@@ -180,6 +181,15 @@ export async function seed(db: Db): Promise<void> {
             ne(s.settings.configOrigin, "operator"),
           ),
         );
+    }
+
+    // Audit checks: documentation follows the code; the enabled switch is the operator's.
+    for (const c of ALL_CHECKS) {
+      const doc = { name: c.name, category: c.category, severity: c.severity, version: c.version, description: c.description, evidenceRecorded: c.evidenceRecorded };
+      await tx
+        .insert(s.auditChecks)
+        .values({ key: c.key, ...doc })
+        .onConflictDoUpdate({ target: s.auditChecks.key, set: { ...doc, updatedAt: sql`now()` } });
     }
 
     await tx

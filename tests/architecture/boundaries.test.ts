@@ -73,3 +73,42 @@ describe("no evasion code anywhere in the repository", () => {
     expect(src.filter((f) => re.test(stripComments(f.text))).map((f) => f.path)).toEqual([]);
   });
 });
+
+describe("the audit layer is deterministic and claims only what a page shows", () => {
+  const audit = src.filter((f) => f.path.startsWith("src/audit/"));
+
+  it("has audit files to check", () => {
+    expect(audit.length).toBeGreaterThan(5);
+  });
+
+  it("uses no AI: imports nothing from src/ai or any model SDK", () => {
+    const AI = /from\s+["'](@\/ai\/|\.\.?\/.*\bai\/|@anthropic-ai\/|openai|@google\/generative-ai|ai["'])/;
+    expect(audit.filter((f) => AI.test(f.text)).map((f) => f.path)).toEqual([]);
+  });
+
+  it("parses with cheerio/slim only, which has no network code", () => {
+    const offenders = audit.filter((f) => /from\s+["']cheerio["']|\bfromURL\b/.test(stripComments(f.text))).map((f) => f.path);
+    expect(offenders).toEqual([]);
+  });
+
+  // Not observable from a page, so no check may assert them in any form.
+  const UNOBSERVABLE = /\b(traffic|visitors?|page ?views|rankings?|ranks?|ranked|domain authority|page authority|backlinks?|conversion rates?|bounce rates?|seo (score|performance)|search (position|visibility)|monthly searches|engagement (rate|metrics?)|followers?)\b/i;
+
+  it("never claims traffic, rankings, domain authority, conversion rates or SEO performance", () => {
+    // Every string literal in audit code is a possible claim, detail or description.
+    const offenders = audit.flatMap((f) =>
+      [...stripComments(f.text).matchAll(/(["'`])((?:\\.|(?!\1)[^\\])*)\1/g)]
+        .map((m) => m[2] ?? "")
+        .filter((lit) => UNOBSERVABLE.test(lit))
+        .map((lit) => `${f.path}: "${lit.slice(0, 80)}"`),
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it("the unobservable-claims guard catches what it should", () => {
+    expect(UNOBSERVABLE.test("Your site gets little traffic")).toBe(true);
+    expect(UNOBSERVABLE.test("poor Google rankings")).toBe(true);
+    expect(UNOBSERVABLE.test("low conversion rate")).toBe(true);
+    expect(UNOBSERVABLE.test("No call-to-action link or button found on the page")).toBe(false);
+  });
+});

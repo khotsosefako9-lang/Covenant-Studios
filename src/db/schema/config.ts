@@ -2,6 +2,7 @@
 // editing a row. Seeded from the Phase 0 document (src/db/seed-data.ts).
 import { sql } from "drizzle-orm";
 import {
+  type AnyPgColumn,
   boolean,
   check,
   integer,
@@ -14,6 +15,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+import { auditChecks } from "./audit";
 import { id, timestamps } from "./common";
 import { billingPeriod, configOrigin, opportunityTypeOrigin, revenueModel, scoreAxis, serviceUnit, signalKind } from "./enums";
 
@@ -92,7 +94,9 @@ export const findingOpportunityMappings = pgTable(
   "finding_opportunity_mappings",
   {
     id: id(),
-    checkKey: text("check_key").notNull(),
+    checkKey: text("check_key")
+      .notNull()
+      .references((): AnyPgColumn => auditChecks.key, { onDelete: "cascade", onUpdate: "cascade" }),
     opportunityTypeId: uuid("opportunity_type_id")
       .notNull()
       .references(() => opportunityTypes.id, { onDelete: "cascade" }),

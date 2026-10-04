@@ -356,6 +356,133 @@ evidence, findings and signals surface through a cluster read.
 - The Postgres pool had no `error` listener, so a server-side termination of an idle connection (restart,
   failover) would have crashed the process. It is now logged, and the client is replaced.
 
+## Phase 6 — deterministic website audit
+
+`src/audit/` turns a fetched homepage into findings. There is no AI anywhere in this layer, and an
+architecture test fails the build if it imports any. It makes no requests of its own: every request
+goes through the fetch layer, with robots.txt, the per-host limiter and the request budget applied.
+It parses with `cheerio/slim`, which has no network code.
+
+### Triage comes first
+
+A client-rendered site gives a static parser an empty document, and every content and conversion
+check would fire on it. Before any check runs, `src/audit/shell.ts` classifies the page:
+
+| Audit status | When | Findings |
+| --- | --- | --- |
+| `RENDER_REQUIRED` | An empty framework mount point (`#root`, `#app`, `#__next`, `app-root`, …) with little text; a `<noscript>` asking for JavaScript; scripts with almost no text; or text under 1% of the markup with inline script most of it | **None** |
+| `NO_CONTENT` | Under 120 characters of visible text and no shell signal (empty page, SVG-only page, meta-refresh page) | **None** |
+| `SHARED_PLATFORM` | The web presence is a Facebook/Linktree-style page, not the company's own site; nothing is requested | **None** |
+| `SOURCE_BLOCKED` | robots.txt disallows the homepage (the robots record is the proof), or the server answers 403 | **None** |
+| `COMPLETED` | The page is auditable | One per enabled check |
+
+The detector's reasons and metrics are stored on the audit (`status_detail`). Doubt resolves toward
+silence: a wrongly detected shell costs one missed audit, while a missed shell produces a page of false
+findings. Headless rendering is not built and needs separate approval.
+
+### Findings
+
+Each finding records:
+- the check key and version
+- a status: `PASS`, `FAIL`, `NOT_APPLICABLE` or `INDETERMINATE`, plus `ERROR` if the check itself threw,
+  which never stops the other checks
+- a severity, on `FAIL` only
+- a confidence from the check's own rules
+- a detail sentence
+
+Evidence rows are `VERIFIED`, `producer = audit`, with the exact excerpt and its location (a CSS path
+such as `body > header > nav > a:nth-of-type(3)`, a text offset, or the request it came from). Each
+row cites the source record it was observed in: the page, or the probe request for HTTP, sitemap,
+link, PDF and profile checks. Checks are switched on or off in the `audit_checks` table, without a
+deploy.
+
+Wording-based checks only judge English pages. On a page declared as another language, or detected as
+one, they return `INDETERMINATE`. Language-neutral signals still count: `tel:`, `mailto:` and WhatsApp
+links, forms, phone numbers.
+
+### The check set (`audit_checks`, version `m0.1`)
+
+| Check | FAIL severity | Rule | Evidence recorded |
+| --- | --- | --- | --- |
+| `tech.https` | high | Requests https://<domain>/. FAIL only when HTTPS could not be reached at all while HTTP could. | Outcome of the HTTPS request and, on FAIL, of the HTTP request that succeeded. |
+| `tech.certificate_valid` | high | FAIL only for errors browsers also reject (expired, wrong hostname, self-signed). Chain errors are INDETERMINATE. | The TLS error code returned for the HTTPS request. |
+| `tech.http_redirects_to_https` | medium | Requests http://<domain>/ and checks where it ends. | The HTTP request's outcome and final URL. |
+| `tech.viewport_meta` | medium | PASS when <meta name=viewport> sets width=device-width. | The viewport meta tag, or its absence from <head>. |
+| `tech.html_weight` | low | Size of the HTML document alone (not images, scripts or styles, which are not downloaded); FAIL above 1 MB. | HTML byte size and counts of referenced scripts, stylesheets and images. |
+| `tech.response_time` | low | Time to response headers, one measurement from the audit server; FAIL above 3 seconds. | Measured milliseconds to response headers. |
+| `tech.title` | medium | PASS for a non-empty, non-placeholder <title>. | The <title> text. |
+| `tech.meta_description` | low | PASS for a non-empty <meta name=description>. | The meta description text. |
+| `tech.canonical` | low | PASS for a canonical link on the same site; FAIL (low) when it points to another site; FAIL (info) when absent. | The canonical link href. |
+| `tech.indexable` | high | FAIL when a robots meta tag or X-Robots-Tag header says noindex (or none). | The robots meta tag and X-Robots-Tag header values. |
+| `tech.sitemap` | info | Requests the sitemap named in robots.txt, else /sitemap.xml. PASS for 200 with an XML type. | The sitemap request's status and content type. |
+| `tech.headings` | low | FAIL (low) with no visible h1; FAIL (info) for several h1s or skipped heading levels. | The h1 text(s) and any skipped level. |
+| `tech.broken_internal_links` | medium | Requests up to 5 internal links from the homepage, in document order. FAIL when one returns 404 or 410. | Each sampled link's URL and status. |
+| `conv.primary_cta_first_screen` | medium | PASS when an action link/button (quote, book, contact, call, shop, tel:/mailto:/WhatsApp) starts within the first 700 characters of non-navigation text. Markup order, not rendered layout. | The first action element found, its text, CSS path and text offset. |
+| `conv.contact_path` | high | PASS for any of: tel:, mailto: or WhatsApp link, enquiry form (incl. embedded), contact page link, or a phone number or email address in the text. | The first contact path found and its location, or the list of signals sought. |
+| `conv.click_to_call` | medium | PASS with a tel: link. FAIL only when a phone number appears as plain text outside any link (a number that is itself a link, e.g. to WhatsApp, is tappable). NOT_APPLICABLE when no phone number is published. | The tel: link, or the plain-text phone number. |
+| `conv.whatsapp_link` | info | PASS for a wa.me / api.whatsapp.com / whatsapp: link. | The WhatsApp link, or its absence. |
+| `conv.enquiry_form` | low | PASS for an on-page enquiry form or a known embedded form provider. INDETERMINATE when only a form-provider script is present. | The form element or embed, and its location. |
+| `conv.form_required_fields` | medium | Counts fields marked required (required / aria-required) in the first enquiry form; FAIL above 6. | The required-field count and the form's location. |
+| `conv.form_position` | low | Text offset of the first enquiry form; FAIL beyond 2,500 characters. Markup order only, so confidence is moderate. | The form's text offset and location. |
+| `conv.trust_signals` | low | PASS for testimonials, reviews, ratings, client logos/'trusted by', accreditations, or review-provider embeds/structured data. | The first trust signal found. |
+| `conv.services_named` | low | PASS when the page names what the business offers. FAIL only for a thin page (under 150 words, at most one heading); otherwise INDETERMINATE. | The heading or phrase that names the offer. |
+| `conv.pricing_info` | info | PASS for rand amounts, ZAR, 'from R…', per-month/hour prices or a pricing/rates/packages section. | The first price or pricing wording found. |
+| `content.business_identity` | low | PASS when the company's name appears in the title, h1, og:site_name, logo alt text or copyright line. FAIL only when none of those elements exist. | The element in which the name was found, or the identifying elements present. |
+| `content.location_stated` | low | PASS for an address, a South African place name, a service-area statement, postal-address structured data or a maps link. | The place, address or map link found. |
+| `content.copyright_year` | low | FAIL when the latest copyright year is two or more years before retrieval. A lagging year is a weak staleness signal, so confidence is low. | The copyright line and its latest year. |
+| `content.latest_dated_content` | low | Uses only machine-readable dates (<time datetime>, published/modified meta, JSON-LD). FAIL when the newest is over 24 months before retrieval. | The newest date found and where. |
+| `content.heavy_catalogue` | medium | Requests up to 3 linked PDFs (catalogues first) without downloading them; FAIL when a declared size exceeds 10 MB. | Each PDF's URL, link text and declared Content-Length. |
+| `content.social_links` | info | PASS for links to Facebook, Instagram, LinkedIn, X, TikTok or YouTube profiles (share buttons excluded). | The profile URLs found. |
+| `content.social_links_resolve` | low | Requests up to 4 linked profiles. FAIL only on 404/410. Platforms that refuse automated access give INDETERMINATE. | Each profile request's outcome. |
+
+`info` severity means "observed absence of an optional feature" (no WhatsApp link, no prices, no
+sitemap, no social links), not a defect. These observations only matter when combined with segment
+signals later.
+
+No check asserts traffic, search rankings, domain authority, conversion rates or SEO performance. An
+architecture test scans every string in `src/audit` for such claims and fails the build if one appears.
+
+### Testing
+
+- **Per-check fixture tests** (`tests/audit/checks.test.ts`): every check, every status it can produce,
+  and the evidence it cites.
+- **The control set** (`tests/audit/controls.test.ts`): six well-built sites where the correct result is
+  silence — a Gqeberha plumber, an industrial PPE supplier, a rugby union, a law firm, a server-rendered
+  Next.js shop with a large data blob, and a WordPress studio with an 80-link mega-menu and a cookie
+  banner. The bar is stricter than "no high severity": no FAIL at low or above on any control, and
+  every info-level observation is listed explicitly.
+- **Hostile fixtures** (`tests/audit/triage.test.ts`): empty page, two malformed documents, React,
+  Angular and Vue shells, an Afrikaans page, a 3.4 MB page, an SVG-only page and a meta-refresh page.
+- **End to end** (`tests/audit/run.test.ts`): fixture sites through the real fetch layer into Postgres,
+  covering:
+  - persisted evidence
+  - every whole-audit status
+  - Facebook/Linktree making zero requests
+  - a disabled check being skipped
+  - a 48 MB catalogue measured without downloading it
+  - every request staying on the fixture host
+
+### Decisions worth knowing
+
+- **Page weight is the HTML document only.** True total weight means downloading every image, script
+  and stylesheet: dozens of requests per prospect, against the politeness budget. The check measures
+  the HTML and records how many resources it references; the name says what it measures.
+- **The audit reads the homepage only.** A missing homepage form is `INDETERMINATE` when a contact page
+  is linked, because that page was not read.
+- **"First screen" is markup order, not rendered layout.** Navigation text does not count, so mega-menus
+  don't push the hero out. Confidence is moderate.
+- **Certificate errors.** Node rejects incomplete chains that browsers repair, so only expired, wrong
+  hostname or self-signed certificates FAIL; other TLS errors are `INDETERMINATE`.
+- **Dates come from the retrieval record.** Staleness is judged against when the page was fetched, never
+  the wall clock, so re-evaluating a stored page gives the same answer. Only machine-readable dates
+  count.
+
+### Command
+
+```sh
+npm run audit -- <companyId> [--url <url>]
+```
+
 ## Running locally
 
 Requires Node 22.12+ and PostgreSQL.
@@ -385,6 +512,10 @@ and target phase, and are not built in M0.
 | CSV enrichment of an existing company | An exact domain match writes nothing, so a CSV cannot add evidence to a company that already exists | A rule for attributing new REPORTED evidence to an existing identity | Keeping records current from repeat imports | M4 |
 | Lead reconciliation on merge | A merge leaves each company's leads where they are, so a cluster can hold two open leads | Lead state machine (Phases 10–11) | One pursuit per business | Phase 10 |
 | Cross-process rate limiting | The per-host limiter is in-process; M0 runs one fetching worker | A second worker process | Politeness held across processes and restarts (advisory lock + next-request time per host) | Before scaling workers |
+| Reading the contact page | The audit reads the homepage only; form checks are INDETERMINATE when a contact page is linked | A second page fetch per audit within the host budget | Fewer INDETERMINATE form results | After the benchmark shows how often it matters |
+| True total page weight | Needs every asset downloaded: dozens of extra requests per prospect | Approval to spend the politeness budget on assets | A real page-weight figure | Not before M1 |
+| Wording checks in Afrikaans and isiXhosa | Vocabulary checks are English-only and abstain elsewhere | Bilingual vocabulary lists checked by a fluent speaker | Fewer INDETERMINATE results on SA sites | After the benchmark |
+| `/bot` page on covenant-studios.co.za | The User-Agent should point site owners at an explanation and an opt-out | The Covenant website being updated | Site owners can identify and contact the crawler | Next time the site is touched |
 | Rendering JavaScript-only pages | Phase 0 makes headless rendering opt-in per check; no browser in Phase 5 | The audit check set (Phase 6) identifying checks that need it | Audits of JS-only sites | Phase 6 or later, with approval |
 | Charset from `<meta charset>` | The body is decoded by the `Content-Type` charset, else UTF-8; reading `<meta>` is parsing | Phase 6 parsing | Correct text on pages that declare their charset only in HTML | Phase 6 |
 | `is_demo` production insert guard | Needs the deployment environment decided | Deployment | Test-data isolation | Deployment |

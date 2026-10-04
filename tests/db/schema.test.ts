@@ -76,7 +76,7 @@ describe.skipIf(!adminUrl)("M0 schema against real PostgreSQL", () => {
       const tables = await q<{ table_name: string }>(
         `select table_name from information_schema.tables where table_schema = 'public' and table_type = 'BASE TABLE'`,
       );
-      expect(tables).toHaveLength(51);
+      expect(tables).toHaveLength(52);
       const names = tables.map((t) => t.table_name);
       for (const t of ["companies", "evidence", "source_records", "audits", "audit_findings", "signals", "opportunities", "scores", "judgements", "weight_sets", "benchmark_cases"]) {
         expect(names).toContain(t);
@@ -448,7 +448,7 @@ describe.skipIf(!adminUrl)("M0 schema against real PostgreSQL", () => {
       ).id;
       await rejects(
         pool.query(
-          `insert into audit_findings (audit_id, check_key, check_version, status, detail, observed_at) values ($1, 'cta.above_fold', '1', 'FAIL', 'd', now())`,
+          `insert into audit_findings (audit_id, check_key, check_version, status, confidence, detail, observed_at) values ($1, 'conv.primary_cta_first_screen', '1', 'FAIL', 0.7, 'd', now())`,
           [a],
         ),
         PG.check,
@@ -456,7 +456,7 @@ describe.skipIf(!adminUrl)("M0 schema against real PostgreSQL", () => {
       );
       const f = (
         await one<{ id: string }>(
-          `insert into audit_findings (audit_id, check_key, check_version, status, severity, detail, observed_at) values ($1, 'cta.above_fold', '1', 'FAIL', 'medium', 'd', now()) returning id`,
+          `insert into audit_findings (audit_id, check_key, check_version, status, severity, confidence, detail, observed_at) values ($1, 'conv.primary_cta_first_screen', '1', 'FAIL', 'medium', 0.7, 'd', now()) returning id`,
           [a],
         )
       ).id;

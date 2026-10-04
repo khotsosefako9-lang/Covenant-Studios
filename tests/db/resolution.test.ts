@@ -95,8 +95,8 @@ async function richCompany(domain: string, name: string) {
   ).id;
   const finding = (
     await one<{ id: string }>(
-      `insert into audit_findings (audit_id, check_key, check_version, status, severity, detail, observed_at)
-       values ($1, 'cta.above_fold', '1', 'FAIL', 'medium', 'No CTA', now()) returning id`,
+      `insert into audit_findings (audit_id, check_key, check_version, status, severity, confidence, detail, observed_at)
+       values ($1, 'conv.primary_cta_first_screen', '1', 'FAIL', 'medium', 0.7, 'No CTA', now()) returning id`,
       [audit],
     )
   ).id;

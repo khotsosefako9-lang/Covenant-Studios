@@ -81,13 +81,21 @@ export const fetchPurpose = pgEnum("fetch_purpose", ["robots", "page"]);
 
 // --- Audits ---------------------------------------------------------------
 
+// Whole-audit results. RENDER_REQUIRED (client-rendered shell), SHARED_PLATFORM (the
+// target is a Facebook/Linktree-style page, not the company's own site) and NO_CONTENT
+// (an empty document) all carry zero findings: auditing them would only produce false ones.
 export const auditStatus = pgEnum("audit_status", [
   "QUEUED",
   "RUNNING",
   "COMPLETED",
   "SOURCE_BLOCKED",
   "FAILED",
+  "RENDER_REQUIRED",
+  "SHARED_PLATFORM",
+  "NO_CONTENT",
 ]);
+
+export const auditCheckCategory = pgEnum("audit_check_category", ["technical", "conversion", "content"]);
 
 export const auditBlockReason = pgEnum("audit_block_reason", [
   "robots_disallow",
@@ -96,11 +104,13 @@ export const auditBlockReason = pgEnum("audit_block_reason", [
   "other",
 ]);
 
+// INDETERMINATE is a first-class result: the page does not give a clear answer.
+// ERROR means the check itself threw; it is never shown as a finding about the site.
 export const findingStatus = pgEnum("finding_status", [
   "PASS",
   "FAIL",
   "NOT_APPLICABLE",
-  "INCONCLUSIVE",
+  "INDETERMINATE",
   "ERROR",
 ]);
 

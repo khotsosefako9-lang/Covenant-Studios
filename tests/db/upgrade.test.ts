@@ -14,6 +14,8 @@ import { adminUrl } from "./harness";
 describe.skipIf(!adminUrl)("upgrade from the Phase 2 schema", () => {
   const name = `covenant_upgrade_${process.pid}_${Date.now()}`;
   const admin = new Pool({ connectionString: adminUrl, max: 1 });
+  // The database is force-dropped at teardown; an idle client may hear about it first.
+  admin.on("error", () => {});
   let pool: Pool | undefined;
   let dir: string | undefined;
 
@@ -29,6 +31,7 @@ describe.skipIf(!adminUrl)("upgrade from the Phase 2 schema", () => {
     const url = new URL(adminUrl as string);
     url.pathname = `/${name}`;
     pool = new Pool({ connectionString: url.toString(), max: 2 });
+    pool.on("error", () => {});
     const db = drizzle(pool, { schema });
 
     dir = await mkdtemp(join(tmpdir(), "covenant-migrations-"));

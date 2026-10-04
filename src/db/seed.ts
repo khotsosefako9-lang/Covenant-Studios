@@ -116,6 +116,18 @@ export async function seed(db: Db): Promise<void> {
         .where(and(eq(s.signalTypes.key, st.key), isNull(s.signalTypes.decayDays), ne(s.signalTypes.configOrigin, "operator")));
     }
 
+    const sigIds = new Map(
+      (await tx.select({ id: s.signalTypes.id, key: s.signalTypes.key }).from(s.signalTypes)).map((r) => [r.key, r.id]),
+    );
+    await tx
+      .insert(s.signalTypeOpportunityTypes)
+      .values(
+        Object.entries(data.signalTypeOpportunityTypes).flatMap(([sig, types]) =>
+          types.map((t) => ({ signalTypeId: need(sigIds, sig), opportunityTypeId: need(typeIds, t), configOrigin: "default" as const })),
+        ),
+      )
+      .onConflictDoNothing();
+
     await tx
       .insert(s.icpSegments)
       .values(data.icpSegments.map(({ key, name, definition }) => ({ key, name, definition })))

@@ -202,6 +202,9 @@ export const signalTypes: SignalTypeSeed[] = [
     name: "Agency fatigue / budget creep",
     kind: "documented_trigger",
     axis: "intent",
+    // Phase 8: a claim about a business's dissatisfaction with a supplier. Nothing on a
+    // homepage evidences it unambiguously, so only an operator may record it.
+    humanOnly: true,
     detectableFrom: "Public signals only: recent agency churn, hiring for in-house marketing, public complaints about scope or cost",
   },
   ...friction("Industrial and B2B supply", [
@@ -228,6 +231,31 @@ export const signalTypes: SignalTypeSeed[] = [
     ["pricing_opacity", "Pricing opacity"],
   ]),
 ];
+
+// signal type → opportunity type (Phase 8). Operator-adjustable defaults derived from the
+// Phase 0 benchmark reasoning and mapping table, not documented Covenant facts. Two
+// types are deliberately unmapped: procurement_scorecard (the B-BBEE segment's service
+// pull names no specific service) and agency_fatigue (no documented service follows from it).
+export const signalTypeOpportunityTypes: Record<string, string[]> = {
+  matchday_scramble: ["sports_matchday_system"],
+  web_underperformance: ["website_rebuild", "technical_website_improvement"],
+  brand_upgrade_need: ["brand_identity", "branding"],
+  high_value_products: ["rfq_system"],
+  catalogue_friction: ["rfq_system", "website_rebuild"],
+  rfq_friction: ["rfq_system"],
+  mobile_commercial_friction: ["website_rebuild"],
+  urgent_service_model: ["conversion_landing_page"],
+  whatsapp_conversion_opportunity: ["conversion_landing_page"],
+  slow_mobile_experience: ["technical_website_improvement", "website_rebuild"],
+  lead_response_friction: ["conversion_landing_page"],
+  sponsorship_inventory: ["sports_platform", "sports_matchday_system"],
+  matchday_content_friction: ["sports_matchday_system"],
+  audience_scale: ["sports_platform"],
+  attendance_opportunity: ["sports_matchday_system", "social_content_system"],
+  manual_order_handling: ["payment_checkout"],
+  no_qualification_path: ["conversion_landing_page"],
+  pricing_opacity: ["conversion_landing_page"],
+};
 
 // Phase 0, "ICP segments". The B-BBEE segment's pull ("retainers, project work at
 // volume") names no specific service, so it has no service mapping.

@@ -18,7 +18,13 @@ const stripComments = (text: string) => text.replace(/\/\*[\s\S]*?\*\//g, "").re
 describe("company-scoped reads go through the identity cluster", () => {
   // Filtering a company-scoped table by one company id misses rows owned by companies
   // merged into it. Only identity code, which deals in individual records, may do so.
-  const ALLOWED = new Set(["src/db/company-scope.ts", "src/identity/resolution.ts"]);
+  const ALLOWED = new Set([
+    "src/db/company-scope.ts",
+    "src/identity/resolution.ts",
+    // Write-path lifecycle: an audit's signals belong to the company record that was
+    // audited; retraction must not reach across merged identities to another site's signals.
+    "src/signals/detect.ts",
+  ]);
 
   it("has no direct eq(<table>.companyId, …) filter outside the allowlist", () => {
     const offenders = src
@@ -114,10 +120,14 @@ describe("the audit layer is deterministic and claims only what a page shows", (
 });
 
 describe("claim types match their writers", () => {
-  it("only the audit writes VERIFIED and only ingest writes REPORTED; nothing writes INFERRED yet", () => {
+  it("only the audit writes VERIFIED; ingest and operator statements write REPORTED; nothing writes INFERRED yet", () => {
     const writes = src.flatMap((f) =>
       [...stripComments(f.text).matchAll(/claimType:\s*"(VERIFIED|REPORTED|INFERRED|UNKNOWN)"/g)].map((m) => `${f.path}:${m[1]}`),
     );
-    expect(writes.filter((w) => !w.startsWith("src/db/schema/")).sort()).toEqual(["src/audit/run.ts:VERIFIED", "src/ingest/companies.ts:REPORTED"]);
+    expect(writes.filter((w) => !w.startsWith("src/db/schema/")).sort()).toEqual([
+      "src/audit/run.ts:VERIFIED",
+      "src/ingest/companies.ts:REPORTED",
+      "src/signals/detect.ts:REPORTED", // operator-recorded signals: an attributed statement
+    ]);
   });
 });

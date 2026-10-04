@@ -50,6 +50,13 @@
       "when": 1791123623354,
       "tag": "0006_phase7_read_time_decay",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1791124333048,
+      "tag": "0007_phase8_signals",
+      "breakpoints": true
     }
   ]
 }

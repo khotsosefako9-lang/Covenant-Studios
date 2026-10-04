@@ -537,6 +537,78 @@ each evidence row with the retrieval time of the source record it cites. No stor
   control finding at low or above, or any change to a check's severity, fails the build until the pin
   is updated deliberately.
 
+## Phase 8 — signal detection
+
+`src/signals/` turns a completed audit's findings into signals: claims about what a business might
+need or intend. It reads only what is already stored (findings, the evidence behind them, source
+records). There is no HTML re-reading and no AI. Abstention is the default.
+
+### Automated detectors (all on the Opportunity axis)
+
+| Signal | Rule | Strength |
+| --- | --- | --- |
+| `web_underperformance` | At least one medium- or high-severity FAIL with confidence ≥ 0.6 | 0.3 + 0.15 per medium + 0.25 per high, max 0.9 |
+| `catalogue_friction` | `content.heavy_catalogue` FAIL (linked PDF over 10 MB) | 0.6; 0.8 above 25 MB; 0.9 above 50 MB |
+| `mobile_commercial_friction` | `tech.viewport_meta` FAIL | 0.7 |
+| `slow_mobile_experience` | `tech.html_weight` FAIL (a single slow response never suffices) | 0.5, or 0.6 with `tech.response_time` FAIL |
+| `lead_response_friction` | Phone not tappable, over 6 required fields, or no CTA in the first screen | 0.5 / 0.5 / 0.4 combined as 1 − ∏(1 − s), max 0.9 |
+| `no_qualification_path` | `conv.enquiry_form` FAIL (never INDETERMINATE) | 0.6 |
+
+A FAIL below confidence 0.6, any INDETERMINATE or NOT_APPLICABLE result, and a finding with no evidence
+never contribute. Each signal records the findings and evidence it rests on (`signal_findings`,
+`signal_evidence`) and is observed at the time of its newest evidence.
+
+Detection is idempotent per audit. A newer audit retracts the previous audit's rule-detected signals:
+friction signals live and die with the audit that produced them. Operator signals are never retracted
+by an audit. Strength decays at read time (Phase 7), and retracted signals are excluded from the
+default read path.
+
+### Not detected automatically, and why
+
+The other 14 types are recorded only by an operator (`npm run signals -- add …`). An operator signal
+rests on an attributed statement stored as REPORTED evidence.
+
+| Signal | Why not automated |
+| --- | --- |
+| `procurement_scorecard` | Human-only by design (Phase 0); trigger-enforced |
+| `agency_fatigue` | Human-only (Phase 8): a claim about dissatisfaction with a supplier that no homepage evidences unambiguously; trigger-enforced from migration 0007 |
+| `matchday_scramble`, `matchday_content_friction`, `attendance_opportunity` | Need social posting history or ticketing context; social audit is not in M0 |
+| `brand_upgrade_need` | Needs a cross-channel comparison of marks and presentation |
+| `high_value_products`, `urgent_service_model`, `sponsorship_inventory`, `manual_order_handling` | Need reading page prose; no deterministic finding evidences them |
+| `audience_scale` | Audience figures are not observable from a page and must not be estimated |
+| `rfq_friction` | No check isolates the quotation path from general enquiry friction |
+| `whatsapp_conversion_opportunity`, `pricing_opacity` | Friction only for some segments; absence alone fires on most well-built sites |
+
+**Consequence: no automated detector produces an Intent signal in M0.** Intent comes from operators,
+or later from the commercial-potential floor (Phase 10).
+
+### The web_underperformance rule
+
+`web_underperformance` counts on Opportunity always. It counts on Intent only when an independent Intent
+signal is present: a different signal resting on none of the same evidence. Its Intent credit is the
+weaker of the two strengths, and it rests on the independent signal's evidence, never on its own. So no
+weakness evidence ever reaches the Intent axis. `src/signals/axes.ts` holds the rule; it is tested
+directly and across all 961 evidence-overlap combinations of a five-item pool.
+
+### Signal → opportunity type (configuration)
+
+`signal_type_opportunity_types` has 24 rows, all `config_origin = default`. They are derived from the
+Phase 0 benchmark reasoning and the mapping table, not documented Covenant facts. `procurement_scorecard`
+and `agency_fatigue` are deliberately unmapped, because no documented service follows from them.
+Opportunity derivation itself is Phase 9.
+
+### Regression
+
+The six control sites produce **no signals at all**: zero on Intent, zero on Opportunity. This runs
+in the signal test suite on every `npm test`. New invariants check that every active signal cites
+evidence, that no rule-detected signal has a human-only type, and that no signal predates its evidence.
+
+```sh
+npm run signals -- detect <auditId>
+npm run signals -- list   <companyId>
+npm run signals -- add    <companyId> --type agency_fatigue --strength 0.6 --basis "What you know and how" --by "Khotso"
+```
+
 ## Running locally
 
 Requires Node 22.12+ and PostgreSQL.
@@ -572,6 +644,8 @@ and target phase, and are not built in M0.
 | True total page weight | Needs every asset downloaded: dozens of extra requests per prospect | Approval to spend the politeness budget on assets | A real page-weight figure | Not before M1 |
 | Wording checks in Afrikaans and isiXhosa | Vocabulary checks are English-only and abstain elsewhere | Bilingual vocabulary lists checked by a fluent speaker | Fewer INDETERMINATE results on SA sites | After the benchmark |
 | `/bot` page on covenant-studios.co.za | The User-Agent should point site owners at an explanation and an opt-out | The Covenant website being updated | Site owners can identify and contact the crawler | Next time the site is touched |
+| Deterministic checks that evidence Intent (sponsor/partner section, ticketing, careers page, "new branch" announcements) | No current finding evidences intent, so automated Intent is zero in M0 | A Phase 6-style check extension held to the control set | Automated intent candidates for operator review | If the benchmark shows the intent gate starved |
+| Segment-aware friction signals (`whatsapp_conversion_opportunity`, `pricing_opacity`) | They are friction only in some segments; they fire wrongly without one | ICP segment assignment on companies | Segment-relevant opportunity signals | After ICP segments are configured |
 | Rendering JavaScript-only pages | Phase 0 makes headless rendering opt-in per check; no browser in Phase 5 | The audit check set (Phase 6) identifying checks that need it | Audits of JS-only sites | Phase 6 or later, with approval |
 | Charset from `<meta charset>` | The body is decoded by the `Content-Type` charset, else UTF-8; reading `<meta>` is parsing | Phase 6 parsing | Correct text on pages that declare their charset only in HTML | Phase 6 |
 | `is_demo` production insert guard | Needs the deployment environment decided | Deployment | Test-data isolation | Deployment |

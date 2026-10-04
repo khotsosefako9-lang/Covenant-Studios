@@ -186,7 +186,7 @@ describe.skipIf(!adminUrl)("provenance holds end to end: CSV import → audit", 
         "no_approved_message_to_suppressed",
         "outreach_claims_have_evidence",
       ]);
-      expect(results.filter((r) => r.status === "ok").length).toBeGreaterThanOrEqual(14);
+      expect(results.filter((r) => r.status === "ok").length).toBeGreaterThanOrEqual(17);
     });
 
     it("the nightly job records its results in system_events", async () => {

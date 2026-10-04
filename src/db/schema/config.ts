@@ -142,6 +142,7 @@ export const signalTypeOpportunityTypes = pgTable(
     opportunityTypeId: uuid("opportunity_type_id")
       .notNull()
       .references(() => opportunityTypes.id, { onDelete: "cascade" }),
+    configOrigin: configOrigin("config_origin").notNull().default("documented"),
     ...timestamps(),
   },
   (t) => [primaryKey({ columns: [t.signalTypeId, t.opportunityTypeId] })],

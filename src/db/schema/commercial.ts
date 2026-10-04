@@ -1,6 +1,6 @@
 // finding → signal → opportunity type → Covenant service, as stored interpretations.
 import { sql } from "drizzle-orm";
-import { check, index, numeric, pgTable, primaryKey, smallint, text, uuid } from "drizzle-orm/pg-core";
+import { check, index, numeric, pgTable, primaryKey, smallint, text, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { auditFindings } from "./audit";
 import { id, timestamps, tstz } from "./common";
 import { covenantServices, opportunityTypes, signalTypes } from "./config";
@@ -30,6 +30,8 @@ export const signals = pgTable(
   },
   (t) => [
     index("signals_company_type").on(t.companyId, t.signalTypeId, t.observedAt),
+    // One signal per detector run: re-detecting the same audit is a no-op.
+    uniqueIndex("signals_detector_run").on(t.companyId, t.signalTypeId, t.detectorRef),
     check("signals_strength_range", sql`${t.strength} between 0 and 1`),
   ],
 );

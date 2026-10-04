@@ -137,6 +137,26 @@ export const INVARIANTS: Invariant[] = [
     violations: sql`select c.id::text, c.display_name || ' has no company.name evidence' as detail from companies c
       where not exists (select 1 from evidence e where e.company_id = c.id and e.claim_key = 'company.name')`,
   },
+  // --- Signals (Phase 8) ---
+  {
+    key: "signal_cites_evidence",
+    description: "Every active signal rests on at least one evidence row.",
+    violations: sql`select sg.id::text, 'active signal with no evidence' as detail from signals sg
+      where sg.status = 'active' and not exists (select 1 from signal_evidence se where se.signal_id = sg.id)`,
+  },
+  {
+    key: "rule_signal_not_human_only",
+    description: "No rule-detected signal has a human-only type (procurement_scorecard, agency_fatigue); also enforced by trigger.",
+    violations: sql`select sg.id::text, st.key || ' detected by rule' as detail from signals sg
+      join signal_types st on st.id = sg.signal_type_id where sg.detected_by = 'rule' and st.human_only`,
+  },
+  {
+    key: "signal_not_before_evidence",
+    description: "No signal claims to be observed before the evidence it rests on.",
+    violations: sql`select sg.id::text, 'observed ' || sg.observed_at || ' before evidence ' || max(e.observed_at) as detail
+      from signals sg join signal_evidence se on se.signal_id = sg.id join evidence e on e.id = se.evidence_id
+      group by sg.id, sg.observed_at having sg.observed_at < max(e.observed_at) - interval '1 second'`,
+  },
 ];
 
 const SAMPLE = 5;

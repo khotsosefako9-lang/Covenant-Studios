@@ -2,7 +2,7 @@
 // rows, so reading by companies.id alone silently misses everything a cluster absorbed.
 // Reads go through the identity cluster instead: any member id resolves to the root
 // and then to every member.
-import { type SQL, eq, sql } from "drizzle-orm";
+import { type SQL, and, eq, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { decayedStrength } from "../core/freshness";
@@ -56,14 +56,15 @@ export async function getCompanySignals(db: Db, companyId: string) {
 
 /**
  * A business's signals with their strength now: decayed at read time from observed_at
- * over the signal type's decay_days. Decay is never stored.
+ * over the signal type's decay_days. Decay is never stored. Retracted signals (superseded
+ * by a newer audit) are excluded unless asked for: they are history, not current state.
  */
-export async function getCompanySignalsNow(db: Db, companyId: string, now = new Date()) {
+export async function getCompanySignalsNow(db: Db, companyId: string, now = new Date(), opts: { includeRetracted?: boolean } = {}) {
   const rows = await db
     .select({ signal: s.signals, typeKey: s.signalTypes.key, decayDays: s.signalTypes.decayDays })
     .from(s.signals)
     .innerJoin(s.signalTypes, eq(s.signalTypes.id, s.signals.signalTypeId))
-    .where(inCompanyCluster(s.signals.companyId, companyId))
+    .where(and(inCompanyCluster(s.signals.companyId, companyId), opts.includeRetracted ? undefined : eq(s.signals.status, "active")))
     .orderBy(s.signals.observedAt);
   return rows.map((r) => ({
     ...r.signal,

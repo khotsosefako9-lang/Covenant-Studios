@@ -7,6 +7,7 @@ import * as schema from "./schema/index";
 import { seed } from "./seed";
 
 const pool = new Pool({ connectionString: loadEnv().DATABASE_URL });
+pool.on("error", (err) => console.error("postgres idle client error:", err.message));
 const db = drizzle(pool, { schema });
 try {
   await migrate(db, { migrationsFolder: "drizzle" });

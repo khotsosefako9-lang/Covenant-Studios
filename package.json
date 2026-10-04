@@ -24,7 +24,8 @@
     "provenance": "tsx src/cli/provenance.ts",
     "quality": "tsx src/cli/quality.ts",
     "test:controls": "vitest run tests/audit/controls.test.ts tests/audit/severity-pins.test.ts",
-    "prebuild": "npm run -s test:controls"
+    "prebuild": "npm run -s test:controls",
+    "signals": "tsx src/cli/signals.ts"
   },
   "dependencies": {
     "cheerio": "^1.2.0",

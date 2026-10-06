@@ -630,8 +630,8 @@ evaluator, which reports a wrong status as `ERROR`, and by `audit_findings_sever
 | `capacity.careers_page` | A careers or vacancies link (path, link text), a careers/jobs subdomain or recruitment platform, or `JobPosting` structured data | Only a "jobs" link: trade sites use it for completed work |
 | `capacity.multiple_locations` | At least 2 distinct postal addresses of the business in JSON-LD or microdata; event venues, job locations and people are excluded | No structured address data. Locations are never counted from prose |
 | `capacity.online_shop` | A cart, basket or checkout link, an add-to-cart control, or a hosted store (Shopify, Ecwid) | Only a shop link, WooCommerce assets or priced products: a catalogue without a cart is not a shop |
-| `capacity.client_logo_wall` | At least 4 images with little text, labelled clients or customers | The label says partners, both clients and sponsors, or nothing (unlabelled logos) |
-| `capacity.sponsor_section` | At least 3 logos, or links to 3 external sites, labelled sponsors ("sponsors & partners" counts) | Partners alone, clients and sponsors together, unlabelled logos, or a sponsors heading or link naming no one. Selling sponsorship ("Become a sponsor", "Sponsorship packages") is inventory, not sponsors |
+| `capacity.client_logo_wall` | At least 2 images with little text, labelled clients or customers (4 before Phase 11) | The label says partners, both clients and sponsors, or nothing (unlabelled logos) |
+| `capacity.sponsor_section` | At least 2 logos, or links to 2 external sites, labelled sponsors (3 before Phase 11) ("sponsors & partners" counts) | Partners alone, clients and sponsors together, unlabelled logos, or a sponsors heading or link naming no one. Selling sponsorship ("Become a sponsor", "Sponsorship packages") is inventory, not sponsors |
 | `capacity.accreditation` | A named body ("members of the Legal Practice Council", "registered with PIRB") or an ISO management-system certification | An "Accreditations" heading naming no body in text |
 
 Sponsor walls and client walls look alike in markup. The label decides, and when it doesn't, both checks
@@ -644,8 +644,8 @@ unchanged; accreditation is a separate capacity check, not an extension of a PAS
 
 | Control | careers | locations | shop | client wall | sponsors | accreditation |
 | --- | --- | --- | --- | --- | --- | --- |
-| plumber | ABSENT | ABSENT (one JSON-LD address) | ABSENT | ABSENT | ABSENT | ABSENT |
-| industrial | ABSENT | INDETERMINATE | ABSENT | ABSENT ("Trusted by", 2 logos) | ABSENT | ABSENT ("SABS-approved" is a product approval) |
+| plumber | ABSENT | ABSENT (one JSON-LD address); INDETERMINATE from Phase 11 | ABSENT | ABSENT | ABSENT | ABSENT; INDETERMINATE from Phase 11 |
+| industrial | ABSENT | INDETERMINATE | ABSENT | ABSENT ("Trusted by", 2 logos); **PRESENT** from Phase 11 | ABSENT | ABSENT ("SABS-approved" is a product approval); INDETERMINATE from Phase 11 |
 | rugby | ABSENT | INDETERMINATE | ABSENT | ABSENT | INDETERMINATE (heading and /sponsors/ link, no sponsor named) | ABSENT |
 | lawfirm | ABSENT | INDETERMINATE | ABSENT | ABSENT | ABSENT ("& Partners" is the firm's name) | **PRESENT** (Legal Practice Council) |
 | nextjs-ssr | ABSENT | INDETERMINATE | INDETERMINATE (/shop link, not read) | ABSENT | ABSENT | ABSENT |
@@ -838,7 +838,7 @@ From `tests/leads/pipeline.test.ts`, with the default settings:
 | Fixture | State | Why |
 | --- | --- | --- |
 | plumber, industrial, lawfirm, nextjs-ssr, wordpress | WATCH_WEAKNESS_ONLY | No Intent signal, no opportunity, no weakness |
-| rugby | **COMMERCIAL_OPPORTUNITY** | `sponsorship_inventory` (rule, 0.70) passes route 1; opportunity `sports_platform` → Sports Platform Build (R45,000). Route 2 fails: 0 of 2 capacity markers |
+| rugby | **COMMERCIAL_OPPORTUNITY** (WATCH_WEAKNESS_ONLY from Phase 11: score 52.7 < 55) | `sponsorship_inventory` (rule, 0.70) passes route 1; opportunity `sports_platform` → Sports Platform Build (R45,000). Route 2 fails: 0 of 2 capacity markers |
 | weak supplier | WATCH_WEAKNESS_ONLY | `website_rebuild` → Custom Business Website (R5,500), but no Intent and 0 of 2 capacity markers |
 
 ```sh
@@ -848,6 +848,93 @@ npm run leads -- override <companyId> --state COMMERCIAL_OPPORTUNITY --reason ".
 npm run leads -- channel <companyId> --value cold_outreach_disallowed --reason "..." --by "Khotso"
 npm run leads -- disqualify <companyId> --disqualifier zero_revenue_speculative --reason "<basis>" --by "Khotso"
 ```
+
+## Phase 11 — scoring and confidence
+
+### Capacity threshold review first
+
+Two client logos under "Trusted by" are evidence, not ABSENT. Where a count sits near a boundary, the
+check now says INDETERMINATE: absence is a claim, uncertainty is not. Route 2's two-marker requirement
+is unchanged.
+
+| Check | Before | Now |
+| --- | --- | --- |
+| `capacity.client_logo_wall` | 4 logos to count | **2** labelled logos count; one labelled logo is INDETERMINATE; unlabelled groups still need 4 (`min_unlabelled_logos`) before they are even ambiguous; the site header and navigation are never a wall |
+| `capacity.sponsor_section` | 3 logos or links | **2**; unlabelled groups as above |
+| `capacity.multiple_locations` | one structured address = ABSENT | INDETERMINATE: structured data often lists only the head office, so the check never claims a single location |
+| `capacity.accreditation` | product approvals and unnamed certification = ABSENT | INDETERMINATE when certification wording names no body ("SABS-approved", "certified", "certificate of compliance"); still never PRESENT |
+| `capacity.careers_page`, `capacity.online_shop` | | Unchanged: "jobs", shop links and WooCommerce were already INDETERMINATE |
+
+Across the controls:
+
+- industrial: client logos ABSENT → **PRESENT**; accreditation ABSENT → INDETERMINATE.
+- plumber: locations ABSENT → INDETERMINATE; accreditation ABSENT → INDETERMINATE.
+- No other control changed.
+
+Check set `m0.4`. The confidence pins dropped one value (`capacity.multiple_locations` has no ABSENT
+any more).
+
+### The score (`src/core/scoring.ts`, pure)
+
+Score = 100 × Σ w·s·k at the Phase 0 weights (`weight_sets`, recorded on every score). Each s is
+computed only over the inputs a dimension could evaluate: what it could not evaluate lowers coverage,
+and so confidence, never the value. Only buying_signal decays (k).
+
+| Dimension | Weight | s | Coverage | Verifiability |
+| --- | --- | --- | --- | --- |
+| buying_signal | 0.22 | 1 − ∏(1 − strength) of active Intent signals | 1 with a signal; otherwise the share of Intent types an audit can detect (1 of 8) | of the evidence beneath (rule: VERIFIED, operator: REPORTED) |
+| icp_fit | 0.18 | operator segment fit: fit 1, potentially_valid 0.5, not_fit 0 | 0 until an operator assigns one (`npm run leads -- segment`) | REPORTED |
+| digital_opportunity | 0.15 | 1 − ∏(1 − severity weight × confidence) over FAILs behind current opportunities | 1 with a completed audit | VERIFIED |
+| service_fit | 0.15 | relevance of the best opportunity mapped to an active service | 1 | INFERRED |
+| commercial_potential | 0.12 | commercial_value ÷ the highest published price of any active service, capped at 1 | 0.5 for a published price + 0.5 × capacity markers / 2 | INFERRED |
+| contactability | 0.10 | criteria met ÷ criteria evaluable: site-published or verified channel, named decision maker, not suppressed | evaluable ÷ 3 (one third in M0) | of the channel evidence |
+| evidence_quality | 0.08 | share of evidenced dimensions resting on VERIFIED evidence | 1 | VERIFIED |
+
+- **commercial_value** = initial + recurring + expansion, each evidenced:
+  - initial is the rank-1 opportunity's published service price;
+  - recurring is non-zero only when that service is a published retainer (one month, never times a duration);
+  - expansion is the rank-2 opportunity's service value, when it is a different service.
+  The components are stored on the dimension.
+- **Confidence** = Σ w·coverage·recency·verifiability / Σ w, with verifiability 1.0 / 0.8 / 0.6 / 0 for
+  VERIFIED / REPORTED / INFERRED / UNKNOWN. Recency comes from the Phase 0 windows.
+- **The two scoring constants** live in the `scoring` setting: the severity weights (0.6 / 0.35 / 0.15 / 0)
+  and the segment-fit values.
+
+### Thresholds and treatment
+
+COMMERCIAL_OPPORTUNITY now needs the gate, an opportunity, score ≥ `qualify_score_threshold` (55) **and**
+confidence ≥ `qualify_confidence_threshold` (0.60). Every score carries the Phase 0 treatment:
+`queue_for_review` (both high), `needs_verification` (high score, low confidence: a research task,
+never a contact), `reject` (low score, sound evidence), or `park` (both low). A lead that passes the gate
+but not the thresholds stays at WATCH_WEAKNESS_ONLY, and the reasons say which threshold and why.
+
+### Snapshots and explanation
+
+Every evaluation writes an immutable score: `scores` + `score_dimensions` (value, weight, decay,
+contribution, coverage, recency, verifiability, explanation, and the ids of the signals, findings,
+opportunities and channels behind it) + `score_dimension_evidence`. Each score records its weight set,
+the audit it was computed against, the rule and every parameter. Decay applies at read.
+
+```sh
+npm run score -- explain <leadId>     # each dimension, and under it the findings, signals and evidence
+npm run score -- list                 # open leads by score
+npm run leads -- segment <companyId> --fit fit --segment sports --reason "..." --by "Khotso"
+```
+
+New invariants: `score_decomposes`, `score_weights_match_set`, `system_qualified_meets_thresholds`,
+`current_score_belongs_to_lead`.
+
+### Fixture scores
+
+| Fixture | Score | Confidence | Treatment | State |
+| --- | --- | --- | --- | --- |
+| rugby | **52.7** (intent 15.4, service fit 10.5, commercial 12.0, contact 10.0, evidence 4.8) | 0.61 | reject | WATCH_WEAKNESS_ONLY (gate passed) |
+| weak supplier | **43.6** (digital 12.5, service fit 14.8, commercial 1.5, contact 10.0, evidence 4.8) | 0.42 | park | WATCH_WEAKNESS_ONLY |
+| plumber, industrial, lawfirm, nextjs-ssr, wordpress | **16.0** each (contact 10.0, evidence 6.0) | 0.39 | park | WATCH_WEAKNESS_ONLY |
+| rugby, after an operator records segment fit "fit" | **69.9** | > 0.7 | queue_for_review | **COMMERCIAL_OPPORTUNITY** |
+
+The ordering is rugby > weak supplier > controls. The weak supplier's points are almost all on the
+Opportunity axis (91 Opportunity, 4 Intent); the rugby union's are on Intent (81).
 
 ## Running locally
 
@@ -885,7 +972,8 @@ and target phase, and are not built in M0.
 | `/bot` page on covenant-studios.co.za | The User-Agent should point site owners at an explanation and an opt-out | The Covenant website being updated | Site owners can identify and contact the crawler | Next time the site is touched |
 | Deterministic checks that evidence Intent (ticketing, "new branch" announcements) | Phase 9's capacity checks (careers, branches, shop, logo walls, sponsors, accreditation) evidence scale, not intent, and feed commercial potential; automated Intent stays zero in M0 | A Phase 6-style check extension held to the control set | Automated intent candidates for operator review | If the benchmark shows the intent gate starved |
 | Probe limits as configuration | Thresholds, detector strengths and (Phase 10) each check's confidence in its outcomes are configuration. The probe limits (5 links, 3 PDFs, 4 profiles) are still literals | Benchmark evidence that the limits matter | Tunable politeness spend per audit | After the benchmark |
-| The weighted score (seven dimensions, `qualify_score_threshold` 55, `qualify_confidence_threshold` 0.6) | Phase 10 builds the gate and state machine, not the score; COMMERCIAL_OPPORTUNITY means gate passed and an opportunity derived, with no score threshold applied yet | Scoring phase | Ranking within COMMERCIAL_OPPORTUNITY | Next scoring phase |
+| Automatic ICP matching | `icp_segments.criteria` is not configured and companies carry no industry, area or size band, so icp_fit (weight 0.18) is evaluable only from an operator's segment fit | Segment criteria and the company facts to match them against | icp_fit without an operator; an automated score ceiling above 82 | After the benchmark |
+| Decision-maker discovery and suppression | Contactability evaluates only the channel criterion: no people are discovered in M0, and suppression is M3 | Contact research; the suppression list (M3) | Contactability coverage above one third | M1 / M3 |
 | Automatic channel suitability | Set by an operator only; nothing in M0 infers it | Evidence of a procurement-only buyer that is not a disqualifier | Fewer unsuitable cold approaches | After the benchmark |
 | Segment-aware friction signals (`whatsapp_conversion_opportunity`, `pricing_opacity`) | They are friction only in some segments; they fire wrongly without one | ICP segment assignment on companies | Segment-relevant opportunity signals | After ICP segments are configured |
 | Rendering JavaScript-only pages | Phase 0 makes headless rendering opt-in per check; no browser in Phase 5 | The audit check set (Phase 6) identifying checks that need it | Audits of JS-only sites | Phase 6 or later, with approval |

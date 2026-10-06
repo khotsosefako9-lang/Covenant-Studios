@@ -68,11 +68,13 @@ describe("capacity.multiple_locations", () => {
 
   it("does not count the same address twice, an event venue, or a job location", () => {
     const org = { "@type": "LocalBusiness", address: addr("1 Main Road", "Gqeberha") };
-    expect(status(k, page("", ld([org, { ...org }])))).toBe("ABSENT");
+    // One own address is never claimed as one location: INDETERMINATE, not PRESENT and not ABSENT.
+    expect(status(k, page("", ld([org, { ...org }])))).toBe("INDETERMINATE");
     const event = { "@type": "SportsEvent", name: "Final", location: { "@type": "Place", address: addr("Nelson Mandela Bay Stadium", "Gqeberha") } };
-    expect(status(k, page("", ld([org, event])))).toBe("ABSENT");
+    expect(status(k, page("", ld([org, event])))).toBe("INDETERMINATE");
     const job = { "@type": "JobPosting", jobLocation: { "@type": "Place", address: addr("7 Harbour Road", "Saldanha") } };
-    expect(status(k, page("", ld([org, job])))).toBe("ABSENT");
+    expect(status(k, page("", ld([org, job])))).toBe("INDETERMINATE");
+    expect(check(k, page("", ld([org, event]))).evidence.map((e) => e.value)).toEqual(["1 Main Road, Gqeberha"]);
   });
 
   it("never counts locations from prose", () => {
@@ -155,8 +157,18 @@ describe("capacity.client_logo_wall and capacity.sponsor_section: telling them a
     expect(status("capacity.sponsor_section", page(links))).toBe("PRESENT");
   });
 
-  it("too few logos is not a wall", () => {
-    expect(both(page(wall("Our clients", 2)))).toEqual(["ABSENT", "ABSENT"]);
+  it("two labelled logos are evidence; one is a boundary case; two unlabelled logos are nothing", () => {
+    // A B2B supplier naming two clients is evidence of operating scale.
+    expect(both(page(wall("Trusted by", 2)))).toEqual(["PRESENT", "ABSENT"]);
+    expect(both(page(wall("Our sponsors", 2)))).toEqual(["ABSENT", "PRESENT"]);
+    expect(status("capacity.client_logo_wall", page(wall("Our clients", 1)))).toBe("INDETERMINATE");
+    // Two or three unlabelled logos are as likely to be payment badges or icons.
+    expect(both(page(`<section><ul>${logos(3)}</ul></section>`))).toEqual(["ABSENT", "ABSENT"]);
+  });
+
+  it("never treats the site header or navigation as a wall", () => {
+    const header = `<!doctype html><html lang="en"><head><title>Acme</title></head><body><header class="clients-bar"><img src="/logo.png" alt="Acme logo"><img src="/badge.png" alt="Client logo"></header><main><h1>Industrial supplies</h1><p>We supply and install equipment for our customers across the region, and you can contact us for a quote.</p></main></body></html>`;
+    expect(both(header)).toEqual(["ABSENT", "ABSENT"]);
   });
 
   it("abstains on a logo group in a language its labels cannot read", () => {
@@ -166,7 +178,7 @@ describe("capacity.client_logo_wall and capacity.sponsor_section: telling them a
 
   it("records the group, its label and its alt texts as evidence", () => {
     const r = check("capacity.client_logo_wall", page(wall("Our clients", 5, "logos", "Client")));
-    expect(r.evidence[0]).toMatchObject({ claim: "Client logo wall", value: '5 images under "Our clients"' });
+    expect(r.evidence[0]).toMatchObject({ claim: "Client logos", value: '5 images under "Our clients"' });
     expect(r.evidence[0]?.locator).toContain("ul");
   });
 });
@@ -181,7 +193,9 @@ describe("capacity.accreditation", () => {
   });
 
   it("does not count product approvals, statutory registrations or B-BBEE levels", () => {
-    expect(status(k, page("<p>SABS-approved hard hats and certified boots.</p>"))).toBe("ABSENT");
+    // Approval or certification wording with no body named is uncertain, never PRESENT.
+    expect(status(k, page("<p>SABS-approved hard hats and certified boots.</p>"))).toBe("INDETERMINATE");
+    expect(status(k, page("<p>Certificate of compliance issued on every installation.</p>"))).toBe("INDETERMINATE");
     expect(status(k, page("<p>Registered with the CIPC since 2004.</p>"))).toBe("ABSENT");
     expect(status(k, page("<p>We are members of the B-BBEE Level 1 club.</p>"))).toBe("ABSENT");
     expect(status(k, page("<p>Meet the members of our team.</p>"))).toBe("ABSENT");

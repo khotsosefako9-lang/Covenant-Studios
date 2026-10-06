@@ -8,7 +8,8 @@ import { FetchRun, loadFetchConfig } from "@/fetch/fetcher";
 import { HostLimiter } from "@/fetch/limiter";
 import { confirmDuplicate, unmerge } from "@/identity/resolution";
 import { addCompanyManually } from "@/ingest/companies";
-import { LeadActionError, clearLeadOverride, liftDisqualification, overrideLeadState, recordOperatorDisqualification, setChannelSuitability } from "@/leads/actions";
+import { LeadActionError, clearLeadOverride, liftDisqualification, overrideLeadState, recordOperatorDisqualification, setChannelSuitability, setSegmentFit } from "@/leads/actions";
+import { explainScore } from "@/leads/explain";
 import { findClusterLead } from "@/leads/evaluate";
 import { runPipeline } from "@/pipeline/run";
 import { runInvariants } from "@/quality/invariants";
@@ -67,7 +68,23 @@ const catalogue: Handler = (_req, res) => {
 };
 
 describe.skipIf(!adminUrl)("the pipeline and the gate, end to end", () => {
-  const outcome: Record<string, { state: string; gate: string; basis: string | null; opportunities: string[]; potential: number | null; reasons: string[] }> = {};
+  const outcome: Record<
+    string,
+    { state: string; gate: string; basis: string | null; opportunities: string[]; potential: number | null; score: number | null; confidence: number | null; treatment: string | null; leadId: string; reasons: string[] }
+  > = {};
+  const record = (e: Awaited<ReturnType<typeof pipeline>>["evaluation"]) => ({
+    state: e.state,
+    gate: e.outcome.gateStatus,
+    basis: e.outcome.gateBasis,
+    opportunities: e.outcome.detail.opportunities,
+    potential: e.outcome.commercialPotentialZar,
+    score: e.score?.result.total ?? null,
+    confidence: e.score?.result.confidence ?? null,
+    treatment: e.outcome.treatment,
+    leadId: e.leadId,
+    reasons: e.outcome.reasons,
+  });
+  let rugbyId: string;
   let supplierId: string;
   let supplierHtml = fixture("weak/supplier.html");
   let supplierSite: Fixture;
@@ -80,14 +97,13 @@ describe.skipIf(!adminUrl)("the pipeline and the gate, end to end", () => {
     for (const [file, name] of CONTROLS) {
       const id = await company(name);
       const r = await pipeline(id, await site(() => fixture(`controls/${file}`)));
-      const e = r.evaluation;
-      outcome[file] = { state: e.state, gate: e.outcome.gateStatus, basis: e.outcome.gateBasis, opportunities: e.outcome.detail.opportunities, potential: e.outcome.commercialPotentialZar, reasons: e.outcome.reasons };
+      outcome[file] = record(r.evaluation);
+      if (file === "rugby.html") rugbyId = id;
     }
     supplierId = await company("Bayside Valves");
     supplierSite = await site(() => supplierHtml, { "/files/bayside-full-catalogue-2019.pdf": catalogue });
     const r = await pipeline(supplierId, supplierSite);
-    const e = r.evaluation;
-    outcome["weak/supplier.html"] = { state: e.state, gate: e.outcome.gateStatus, basis: e.outcome.gateBasis, opportunities: e.outcome.detail.opportunities, potential: e.outcome.commercialPotentialZar, reasons: e.outcome.reasons };
+    outcome["weak/supplier.html"] = record(r.evaluation);
     // For the phase report.
     if (process.env.GATE_REPORT) writeFileSync(process.env.GATE_REPORT, JSON.stringify(outcome, null, 2));
   }, 120_000);
@@ -109,8 +125,48 @@ describe.skipIf(!adminUrl)("the pipeline and the gate, end to end", () => {
       }
     });
 
-    it("qualifies the rugby union without an operator: its sponsorship offer is an Intent signal", () => {
-      expect(outcome["rugby.html"]).toMatchObject({ state: "COMMERCIAL_OPPORTUNITY", gate: "PASSED", basis: "buying_signal", opportunities: ["sports_platform"] });
+    it("passes the rugby union through the gate, but its score of 52.7 does not reach 55: ICP fit is unevaluable without an operator", () => {
+      expect(outcome["rugby.html"]).toMatchObject({ state: "WATCH_WEAKNESS_ONLY", gate: "PASSED", basis: "buying_signal", opportunities: ["sports_platform"], score: 52.7, treatment: "reject" });
+      expect(outcome["rugby.html"]?.confidence).toBeGreaterThanOrEqual(0.6);
+    });
+
+    it("orders the leads defensibly: the rugby union above the weak supplier above every well-built control", () => {
+      const s = (f: string) => outcome[f]?.score ?? -1;
+      expect(s("rugby.html")).toBeGreaterThan(s("weak/supplier.html"));
+      for (const file of ["plumber.html", "industrial.html", "lawfirm.html", "nextjs-ssr.html", "wordpress.html"]) expect(s("weak/supplier.html"), file).toBeGreaterThan(s(file));
+    });
+
+    it("qualifies the rugby union once an operator records its segment fit", async () => {
+      const r = await setSegmentFit(db, { companyId: rugbyId, fit: "fit", segmentKey: "sports", actor: "Khotso", reason: "Provincial union with matchday inventory and sponsorship packages", now: new Date(clock.now()) });
+      expect(r).toMatchObject({ state: "COMMERCIAL_OPPORTUNITY", outcome: { treatment: "queue_for_review", gateBasis: "buying_signal" } });
+      // +18 for icp_fit; evidence quality drops from 3/5 to 3/6 VERIFIED-backed dimensions, since the fit is REPORTED.
+      expect(r.score?.result.total).toBeCloseTo(69.9, 1);
+      expect(r.score?.result.confidence).toBeGreaterThan(0.7);
+    });
+
+    it("explains the rugby union's score down to the finding and signal that produced it", async () => {
+      const e = await explainScore(db, { leadId: outcome["rugby.html"]?.leadId as string, now: new Date(clock.now()) });
+      expect(e.dimensions.map((d) => d.dimension)).toEqual(["buying_signal", "icp_fit", "digital_opportunity", "service_fit", "commercial_potential", "contactability", "evidence_quality"]);
+      expect(e.total).toBeCloseTo(e.dimensions.reduce((a, d) => a + d.contribution, 0), 1);
+      expect(e.weightSet).toBe("phase0_default v1");
+      const bs = e.dimensions.find((d) => d.dimension === "buying_signal");
+      expect(bs?.signals.map((x) => x.typeKey)).toEqual(["sponsorship_inventory"]);
+      expect(bs?.findings.map((f) => [f.checkKey, f.status])).toEqual([["commercial.sponsorship_offer", "PRESENT"]]);
+      expect(bs?.evidence.every((x) => x.claimType === "VERIFIED" && x.retrievalMethod === "http_fetch")).toBe(true);
+      const cp = e.dimensions.find((d) => d.dimension === "commercial_potential");
+      expect(cp?.components).toMatchObject({ initialValueZar: 45000, recurringValueZar: 0, expansionPotentialZar: 0 });
+      expect(cp?.opportunities.map((o) => [o.typeKey, o.serviceKey])).toEqual([["sports_platform", "sports_platform_build"]]);
+      // Decay applies at read: 120 days on, the sponsorship signal has decayed out of its 90-day window.
+      const later = await explainScore(db, { leadId: outcome["rugby.html"]?.leadId as string, now: new Date(clock.now() + 120 * 24 * 3600 * 1000) });
+      expect(later.dimensions.find((d) => d.dimension === "buying_signal")?.decayNow).toBe(0);
+      expect(later.totalNow).toBeCloseTo(later.total - (bs?.contribution ?? 0), 1);
+      expect(later.total).toBe(e.total); // the snapshot itself never changes
+    });
+
+    it("keeps every score an immutable snapshot", async () => {
+      const [sc] = await q<{ id: string }>(`select id from scores limit 1`);
+      await rejects(pool.query(`update scores set total = 99 where id = $1`, [sc?.id]), PG.check);
+      await rejects(pool.query(`update score_dimensions set value = 1 where score_id = $1`, [sc?.id]), PG.check);
     });
 
     it("holds the weak supplier at WATCH_WEAKNESS_ONLY: a rebuild opportunity, no intent, no evidenced capacity", () => {
@@ -187,7 +243,7 @@ describe.skipIf(!adminUrl)("the pipeline and the gate, end to end", () => {
 
   describe("channel suitability is not disqualification", () => {
     it("marks a fit business unsuitable for cold outreach without changing its state", async () => {
-      const rugby = (await q<{ company_id: string }>(`select l.company_id from leads l where l.lead_state = 'COMMERCIAL_OPPORTUNITY'`))[0]?.company_id as string;
+      const rugby = rugbyId;
       await setChannelSuitability(db, { companyId: rugby, value: "cold_outreach_disallowed", actor: "Khotso", reason: "Union sponsorship goes through a formal procurement cycle" });
       const r = await pipeline(rugby, null);
       expect(r.evaluation.state).toBe("COMMERCIAL_OPPORTUNITY");
@@ -284,7 +340,7 @@ describe.skipIf(!adminUrl)("the pipeline and the gate, end to end", () => {
     await pipeline(y, null);
     await pool.query(`update companies set status = 'merged', merged_into_id = $1 where id = $2`, [x, y]);
     // A state that disagrees with the last recorded transition and evaluation.
-    const [rugby] = await q<{ id: string }>(`select id from leads where lead_state = 'COMMERCIAL_OPPORTUNITY' and state_override is null`);
+    const [rugby] = await q<{ id: string }>(`select id from leads where company_id = $1`, [rugbyId]);
     await pool.query(`update leads set lead_state = 'DISQUALIFIED', system_lead_state = 'DISQUALIFIED' where id = $1`, [rugby?.id]);
     // A qualified lead whose opportunities are gone.
     const [supplier] = await q<{ id: string }>(`select id from leads where company_id = $1`, [supplierId]);
@@ -294,6 +350,17 @@ describe.skipIf(!adminUrl)("the pipeline and the gate, end to end", () => {
       [supplier?.id],
     );
     await pool.query(`update opportunities set superseded_at = now() where company_id = $1`, [supplierId]);
+    // Scores that do not decompose, carry the wrong weight, or belong to another lead.
+    const [someScore] = await q<{ id: string; lead_id: string; weight_set_id: string }>(`select id, lead_id, weight_set_id from scores where lead_id = $1 limit 1`, [rugby?.id]);
+    const [bare] = await q<{ id: string }>(
+      `insert into scores (lead_id, weight_set_id, total, confidence, evidence_quality, rule) values ($1, $2, 50, 0.5, 0.5, 'scoring/1') returning id`,
+      [someScore?.lead_id, someScore?.weight_set_id],
+    );
+    await pool.query(
+      `insert into score_dimensions (score_id, dimension, value, weight, decay, contribution, coverage, recency, verifiability) values ($1, 'icp_fit', 0.5, 0.5, 1, 25, 1, 1, 1)`,
+      [bare?.id],
+    );
+    await pool.query(`update leads set current_score_id = $1 where id = $2`, [someScore?.id, (await q<{ id: string }>(`select id from leads where company_id = $1`, [x]))[0]?.id]);
     // A detection rule pointing at a check that is not a commercial-offer check.
     await pool.query(`update disqualifiers set detection_check_key = 'tech.title' where key = 'bureaucratic_procurement'`);
 
@@ -306,6 +373,10 @@ describe.skipIf(!adminUrl)("the pipeline and the gate, end to end", () => {
         "one_open_lead_per_cluster",
         "system_disqualified_has_disqualification",
         "system_qualified_has_opportunity",
+        "system_qualified_meets_thresholds",
+        "score_decomposes",
+        "score_weights_match_set",
+        "current_score_belongs_to_lead",
       ].sort(),
     );
   });

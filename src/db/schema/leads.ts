@@ -26,6 +26,7 @@ import {
   leadState,
   leadStatus,
   leadTransitionCause,
+  scoreTreatment,
   scoreDimension,
   segmentFit,
   verdict,
@@ -63,6 +64,13 @@ export const leads = pgTable(
     lastEvaluationId: uuid("last_evaluation_id").references((): AnyPgColumn => leadEvaluations.id, { onDelete: "set null" }),
     // Channel suitability is not client suitability (benchmark category 15).
     segmentFit: segmentFit("segment_fit").notNull().default("unknown"),
+    // Segment fit is an operator judgement (Phase 11): ICP criteria are not configured for
+    // automatic matching, so icp_fit is evaluable only once someone assigns it.
+    segmentFitSetBy: text("segment_fit_set_by"),
+    segmentFitSetAt: tstz("segment_fit_set_at"),
+    segmentFitReason: text("segment_fit_reason"),
+    // The current score's treatment (Phase 0): queue_for_review, needs_verification, reject or park.
+    scoreTreatment: scoreTreatment("score_treatment"),
     outreachChannelSuitability: channelSuitability("outreach_channel_suitability").notNull().default("unknown"),
     channelSuitabilityReason: text("channel_suitability_reason"),
     channelSuitabilitySetBy: text("channel_suitability_set_by"),
@@ -111,6 +119,10 @@ export const leads = pgTable(
       sql`(${t.systemGateStatus} = 'PASSED') = (${t.systemGateBasis} is not null) and ${t.systemGateBasis} is distinct from 'human_override'`,
     ),
     check("leads_closed", sql`(${t.status} = 'closed') = (${t.closedAt} is not null) and (${t.closedAt} is null or ${t.closedReason} is not null)`),
+    check(
+      "leads_segment_fit_attributed",
+      sql`${t.segmentFit} = 'unknown' or (${t.segmentFitSetBy} is not null and ${t.segmentFitSetAt} is not null and ${t.segmentFitReason} is not null)`,
+    ),
     check("leads_merge_closure", sql`(${t.mergedIntoLeadId} is null and ${t.closedByMergeId} is null) or ${t.closedReason} = 'merged'`),
   ],
 );
@@ -132,6 +144,9 @@ export const leadEvaluations = pgTable(
     gateBasis: intentGateBasis("gate_basis"),
     // Entry price of the best mapped opportunity, when the capacity profile evidences it.
     commercialPotentialZar: integer("commercial_potential_zar"),
+    // The score computed in this evaluation (Phase 11) and what it calls for.
+    scoreId: uuid("score_id").references((): AnyPgColumn => scores.id, { onDelete: "restrict" }),
+    treatment: scoreTreatment("treatment"),
     rule: text("rule").notNull(),
     reasons: jsonb("reasons").notNull(),
     // The inputs: intent signals, capacity markers, opportunities, disqualifications (ids and values).
@@ -221,6 +236,10 @@ export const scores = pgTable(
     intentAxis: numeric("intent_axis", { precision: 5, scale: 2 }),
     confidence: unit("confidence").notNull(),
     evidenceQuality: unit("evidence_quality").notNull(),
+    // Phase 11: the scoring rule and parameters it ran on, and the thresholds' verdict.
+    rule: text("rule"),
+    params: jsonb("params"),
+    treatment: scoreTreatment("treatment"),
     computedAt: tstz("computed_at").notNull().defaultNow(),
     traceId: text("trace_id"),
     ...timestamps(),
@@ -251,6 +270,10 @@ export const scoreDimensions = pgTable(
     recency: unit("recency").notNull(),
     verifiability: unit("verifiability").notNull(),
     explanation: text("explanation"),
+    // What produced the value (Phase 11): signal, finding, opportunity, channel and contact ids,
+    // and for commercial_potential its evidenced components. Evidence ids are also linked in
+    // score_dimension_evidence.
+    inputs: jsonb("inputs").notNull().default({}),
     ...timestamps(),
   },
   (t) => [

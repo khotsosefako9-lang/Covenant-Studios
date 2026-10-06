@@ -54,8 +54,8 @@ describe("check set regression pins", () => {
     expect(Object.fromEntries(ALL_CHECKS.map((c) => [c.key, c.severity]))).toEqual(PINNED);
   });
 
-  it("is check set version m0.3 (bump the version when check logic changes)", () => {
-    expect(CHECK_SET_VERSION).toBe("m0.3");
+  it("is check set version m0.4 (bump the version when check logic changes)", () => {
+    expect(CHECK_SET_VERSION).toBe("m0.4");
   });
 
   // Thresholds are configuration (audit_checks.params). Their code defaults are pinned here
@@ -73,8 +73,8 @@ describe("check set regression pins", () => {
       "content.latest_dated_content": { max_age_months: 24 },
       "content.heavy_catalogue": { max_pdf_bytes: 10 * 1024 * 1024 },
       "capacity.multiple_locations": { min_distinct_locations: 2 },
-      "capacity.client_logo_wall": { min_logos: 4, max_text_chars_per_logo: 40 },
-      "capacity.sponsor_section": { min_sponsors: 3, max_text_chars_per_logo: 40 },
+      "capacity.client_logo_wall": { min_logos: 2, min_unlabelled_logos: 4, max_text_chars_per_logo: 40 },
+      "capacity.sponsor_section": { min_sponsors: 2, min_unlabelled_logos: 4, max_text_chars_per_logo: 40 },
     });
   });
 

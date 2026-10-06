@@ -51,6 +51,13 @@ export const settingSchemas = {
   fetch_host_budget_per_run: z.number().int().min(1).max(200),
   fetch_cache_ttl_hours: z.number().min(0),
   robots_cache_ttl_hours: z.number().min(0).max(24),
+  // Scoring (Phase 11).
+  scoring: z
+    .object({
+      severity_weights: z.object({ high: unit, medium: unit, low: unit, info: unit }).strict(),
+      segment_fit_values: z.object({ fit: unit, potentially_valid: unit, not_fit: unit }).strict(),
+    })
+    .strict(),
   // Intent gate (Phase 10).
   intent_gate: z
     .object({

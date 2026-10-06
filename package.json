@@ -29,7 +29,8 @@
     "opportunities": "tsx src/cli/opportunities.ts",
     "thresholds": "tsx src/cli/thresholds.ts",
     "pipeline": "tsx src/cli/pipeline.ts",
-    "leads": "tsx src/cli/leads.ts"
+    "leads": "tsx src/cli/leads.ts",
+    "score": "tsx src/cli/score.ts"
   },
   "dependencies": {
     "cheerio": "^1.2.0",

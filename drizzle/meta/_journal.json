@@ -71,6 +71,13 @@
       "when": 1791270999111,
       "tag": "0009_phase10_intent_gate",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1791274070536,
+      "tag": "0010_phase11_scoring",
+      "breakpoints": true
     }
   ]
 }

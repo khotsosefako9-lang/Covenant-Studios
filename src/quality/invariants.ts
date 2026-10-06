@@ -231,6 +231,39 @@ export const INVARIANTS: Invariant[] = [
       left join audit_checks c on c.key = d.detection_check_key
       where d.detection_check_key is not null and (c.key is null or c.category <> 'commercial')`,
   },
+  // --- Scoring (Phase 11) ---
+  {
+    key: "score_decomposes",
+    description: "A Phase 11 score has all seven dimensions, and its total is the sum of their contributions.",
+    violations: sql`select sc.id::text, count(d.dimension) || ' dimensions, contributions sum ' || coalesce(sum(d.contribution), 0) || ' vs total ' || sc.total as detail
+      from scores sc left join score_dimensions d on d.score_id = sc.id where sc.rule is not null
+      group by sc.id, sc.total having count(d.dimension) <> 7 or abs(coalesce(sum(d.contribution), 0) - sc.total) > 0.05`,
+  },
+  {
+    key: "score_weights_match_set",
+    description: "Every dimension of a score carries the weight its recorded weight set gives that dimension.",
+    violations: sql`select d.score_id::text as id, d.dimension || ' weight ' || d.weight || ' vs set ' || w.w as detail
+      from score_dimensions d join scores sc on sc.id = d.score_id
+      join lateral (select case d.dimension
+          when 'buying_signal' then ws.w_buying_signal when 'icp_fit' then ws.w_icp_fit
+          when 'digital_opportunity' then ws.w_digital_opportunity when 'service_fit' then ws.w_service_fit
+          when 'commercial_potential' then ws.w_commercial_potential when 'contactability' then ws.w_contactability
+          else ws.w_evidence_quality end as w from weight_sets ws where ws.id = sc.weight_set_id) w on true
+      where d.weight <> w.w`,
+  },
+  {
+    key: "system_qualified_meets_thresholds",
+    description: "The system puts a lead in COMMERCIAL_OPPORTUNITY only when its current score and confidence both meet the qualification thresholds.",
+    violations: sql`select l.id::text, 'COMMERCIAL_OPPORTUNITY with treatment ' || coalesce(sc.treatment::text, 'none') as detail from leads l
+      left join scores sc on sc.id = l.current_score_id
+      where l.system_lead_state = 'COMMERCIAL_OPPORTUNITY' and (sc.id is null or sc.treatment is distinct from 'queue_for_review')`,
+  },
+  {
+    key: "current_score_belongs_to_lead",
+    description: "A lead's current score is one of its own.",
+    violations: sql`select l.id::text, 'current score ' || sc.id || ' belongs to lead ' || sc.lead_id as detail from leads l
+      join scores sc on sc.id = l.current_score_id where sc.lead_id <> l.id`,
+  },
 ];
 
 const SAMPLE = 5;

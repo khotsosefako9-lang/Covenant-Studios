@@ -379,6 +379,14 @@ export const settings: { key: SettingKey; value: unknown; origin: Origin; descri
   { key: "robots_cache_ttl_hours", value: 24, origin: "default", description: "How long a fetched robots.txt is reused (RFC 9309 caps caching at 24 hours)." },
   { key: "confidence_recency_floor", value: 0.4, origin: "documented", description: "Recency factor at twice the refresh window (Phase 0 'Confidence')." },
   {
+    key: "scoring",
+    value: { severity_weights: { high: 0.6, medium: 0.35, low: 0.15, info: 0 }, segment_fit_values: { fit: 1, potentially_valid: 0.5, not_fit: 0 } },
+    origin: "default",
+    description:
+      "Scoring (Phase 11). severity_weights: how much one audit FAIL behind a current opportunity adds to digital_opportunity, times the finding's confidence, combined as 1 − ∏(1 − x). " +
+      "segment_fit_values: icp_fit for an operator-assigned segment fit. Weights per dimension live in weight_sets, not here.",
+  },
+  {
     key: "intent_gate",
     value: { min_intent_strength: 0, min_capacity_markers: 2, min_capacity_confidence: 0.7, min_disqualifier_confidence: 0.8 },
     origin: "default",

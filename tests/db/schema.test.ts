@@ -549,8 +549,10 @@ describe.skipIf(!adminUrl)("M0 schema against real PostgreSQL", () => {
         PG.check,
         "leads_channel_disallowed_has_reason",
       );
+      // Segment fit is an operator judgement: never set without who, when and why.
+      await rejects(pool.query(`update leads set segment_fit = 'fit' where id = $1`, [l]), PG.check, "leads_segment_fit_attributed");
       await pool.query(
-        `update leads set segment_fit = 'potentially_valid', outreach_channel_suitability = 'cold_outreach_disallowed', channel_suitability_reason = 'procurement_cycle' where id = $1`,
+        `update leads set segment_fit = 'potentially_valid', segment_fit_set_by = 'K', segment_fit_set_at = now(), segment_fit_reason = 'r', outreach_channel_suitability = 'cold_outreach_disallowed', channel_suitability_reason = 'procurement_cycle' where id = $1`,
         [l],
       );
     });

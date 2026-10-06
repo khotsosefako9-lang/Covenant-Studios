@@ -175,6 +175,9 @@ export const leadTransitionCause = pgEnum("lead_transition_cause", [
   "unmerge",
 ]);
 
+// Phase 0 "How the two combine": what a score and its confidence together call for.
+export const scoreTreatment = pgEnum("score_treatment", ["queue_for_review", "needs_verification", "reject", "park"]);
+
 export const segmentFit = pgEnum("segment_fit", ["fit", "potentially_valid", "not_fit", "unknown"]);
 
 export const channelSuitability = pgEnum("outreach_channel_suitability", [

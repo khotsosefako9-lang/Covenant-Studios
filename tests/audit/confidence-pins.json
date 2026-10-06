@@ -145,8 +145,7 @@
     "confidence_absent": 0.75
   },
   "capacity.multiple_locations": {
-    "confidence_present": 0.85,
-    "confidence_absent": 0.6
+    "confidence_present": 0.85
   },
   "capacity.online_shop": {
     "confidence_present_1": 0.9,

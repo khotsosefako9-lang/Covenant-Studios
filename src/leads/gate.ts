@@ -7,8 +7,9 @@
 //      business can pay it, so without capacity evidence there is no commercial potential.
 // The system never produces OUTREACH_READY: that needs a human YES (Phase 13).
 import type { CapacityProfile } from "@/commercial/capacity";
+import type { Treatment } from "@/core/scoring";
 
-export const GATE_RULE_VERSION = "intent-gate/1";
+export const GATE_RULE_VERSION = "intent-gate/2";
 
 export type LeadState = "PENDING_EVALUATION" | "WATCH_WEAKNESS_ONLY" | "COMMERCIAL_OPPORTUNITY" | "DISQUALIFIED";
 export type GateStatus = "NOT_EVALUATED" | "PASSED" | "FAILED";
@@ -40,6 +41,12 @@ export interface GateInput {
   disqualifications: { id: string; disqualifierKey: string; recordedBy: string }[];
   floorZar: number | null;
   params: IntentGateParams;
+  /**
+   * The lead's score this evaluation (Phase 11), with the Phase 0 treatment of its score and
+   * confidence against the qualification thresholds. Null = not scored (nothing to evaluate,
+   * or the thresholds are NOT_CONFIGURED).
+   */
+  score?: { total: number; confidence: number; treatment: Treatment | null; thresholds: { score: number | null; confidence: number | null } } | null;
 }
 
 export interface GateOutcome {
@@ -47,6 +54,7 @@ export interface GateOutcome {
   gateStatus: GateStatus;
   gateBasis: GateBasis | null;
   commercialPotentialZar: number | null;
+  treatment: Treatment | null;
   reasons: string[];
   rule: string;
   detail: {
@@ -65,7 +73,7 @@ export function gateRule(p: IntentGateParams, floorZar: number | null): string {
     `${GATE_RULE_VERSION}: buying_signal = an active Intent signal with decayed strength > ${p.min_intent_strength}; ` +
     `commercial_potential_floor = the best current opportunity's entry price (project or bundle) ≥ R${floorZar ?? "NOT_CONFIGURED"} ` +
     `with ≥ ${p.min_capacity_markers} capacity markers PRESENT at confidence ≥ ${p.min_capacity_confidence}; ` +
-    `DISQUALIFIED on any active disqualification; COMMERCIAL_OPPORTUNITY = gate passed and an opportunity derived; otherwise WATCH_WEAKNESS_ONLY`
+    `DISQUALIFIED on any active disqualification; COMMERCIAL_OPPORTUNITY = gate passed, an opportunity derived, and score and confidence both at or above their thresholds; otherwise WATCH_WEAKNESS_ONLY`
   );
 }
 
@@ -89,7 +97,8 @@ export function evaluateGate(input: GateInput): GateOutcome {
     auditId: input.completedAuditId,
   };
   const rule = gateRule(p, input.floorZar);
-  const base = { commercialPotentialZar: potential, rule, detail };
+  const treatment = input.score?.treatment ?? null;
+  const base = { commercialPotentialZar: potential, rule, detail, treatment };
 
   const evidenced = input.completedAuditId !== null || input.intentSignals.length > 0 || input.opportunities.length > 0 || input.disqualifications.length > 0;
   if (!evidenced) {
@@ -118,12 +127,31 @@ export function evaluateGate(input: GateInput): GateOutcome {
   if (input.disqualifications.length) {
     systemState = "DISQUALIFIED";
     reasons.unshift(`Disqualified: ${[...new Set(input.disqualifications.map((d) => d.disqualifierKey))].join(", ")}`);
-  } else if (gateStatus === "PASSED" && input.opportunities.length) {
+  } else if (gateStatus === "PASSED" && input.opportunities.length && treatment === "queue_for_review") {
     systemState = "COMMERCIAL_OPPORTUNITY";
   } else {
     systemState = "WATCH_WEAKNESS_ONLY";
-    if (gateStatus === "PASSED") reasons.push("The gate passed but no opportunity was derived: nothing to pursue yet");
+    if (gateStatus === "PASSED" && !input.opportunities.length) reasons.push("The gate passed but no opportunity was derived: nothing to pursue yet");
+    else if (gateStatus === "PASSED") reasons.push("The gate passed but the score does not qualify the lead");
     else if (!input.weaknessSignals.length) reasons.push("No weakness found either");
   }
+  if (input.score) reasons.push(scoreReason(input.score));
   return { ...base, systemState, gateStatus, gateBasis, reasons };
+}
+
+function scoreReason(score: NonNullable<GateInput["score"]>): string {
+  const { total, confidence, treatment, thresholds } = score;
+  const at = `score ${total.toFixed(1)}, confidence ${confidence.toFixed(2)} (thresholds ${thresholds.score ?? "NOT_CONFIGURED"} / ${thresholds.confidence ?? "NOT_CONFIGURED"})`;
+  switch (treatment) {
+    case "queue_for_review":
+      return `Qualifies on ${at}`;
+    case "needs_verification":
+      return `Needs verification: ${at}; the score is high but too little of it is evidenced, so collect more evidence before any contact`;
+    case "reject":
+      return `Does not qualify: ${at}; the evidence is sound and the score is low`;
+    case "park":
+      return `Parked: ${at}; both are low, re-evaluate on the next refresh`;
+    default:
+      return `Not qualified: ${at}`;
+  }
 }

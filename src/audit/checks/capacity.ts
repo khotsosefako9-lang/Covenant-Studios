@@ -159,16 +159,19 @@ interface LogoGroup {
 const imagesIn = (doc: PageDoc, el: Element) =>
   (doc.$(el).find("img, svg").toArray() as Element[]).filter((img) => !ancestors(img, 30).some((a) => a.name === "svg") && doc.offsets.has(img));
 
-/** Tight groups of images with little text: logo walls, but also galleries and team photos. */
+const inSiteChrome = (el: Element) => [el, ...ancestors(el, 30)].some((a) => a.name === "header" || a.name === "nav" || a.attribs?.role === "navigation");
+
+/** Tight groups of images with little text: logo walls, but also galleries and team photos. The site header and navigation are never a wall. */
 function imageGroups(doc: PageDoc, minLogos: number, maxTextPerLogo: number): { el: Element; imgs: Element[] }[] {
   const candidates = visible(doc, "section, div, ul, ol, aside, footer, figure, article, table, p")
+    .filter((el) => !inSiteChrome(el))
     .map((el) => ({ el, imgs: imagesIn(doc, el) }))
     .filter((c) => c.imgs.length >= minLogos && textOf(doc.$, c.el).length <= maxTextPerLogo * c.imgs.length);
   // Keep the tightest container: drop any candidate that contains another candidate.
   return candidates.filter((c) => !candidates.some((d) => d !== c && ancestors(d.el, 30).includes(c.el)));
 }
 
-function classify(doc: PageDoc, el: Element, imgs: Element[]): LogoGroup {
+function classify(doc: PageDoc, el: Element, imgs: Element[], minUnlabelled: number): LogoGroup {
   const heading = headingFor(doc, el);
   const attrs = [el, ...ancestors(el, 3)].map(attrWords).join(" ");
   const alts = imgs.map((i) => (i.attribs?.alt ?? "").trim()).filter(Boolean);
@@ -184,9 +187,10 @@ function classify(doc: PageDoc, el: Element, imgs: Element[]): LogoGroup {
   else if (client || sponsor || partner) kind = "ambiguous";
   else if (OTHER_LABEL.test(label)) kind = "other";
   else {
-    // Unlabelled: a wall of logos is ambiguous; a group of photographs is not a wall at all.
+    // Unlabelled: a wall of logos is ambiguous; a group of photographs is not a wall at all,
+    // and a couple of unlabelled logos is just as likely to be decoration (payment badges, icons).
     const logoish = /\blogos?\b/i.test(`${attrs} ${alts.join(" ")} ${srcs}`);
-    kind = logoish ? "ambiguous" : "other";
+    kind = logoish && imgs.length >= minUnlabelled ? "ambiguous" : "other";
   }
   return { el, count: imgs.length, kind, label: heading ? textOf(doc.$, heading) : attrs.trim() || "(unlabelled)", alts };
 }
@@ -198,9 +202,19 @@ const groupEvidence = (doc: PageDoc, g: LogoGroup, claim: string): EvidenceItem 
   locator: pathOf(g.el),
 });
 
-function logoGroups(doc: PageDoc, minLogos: number, maxTextPerLogo: number): LogoGroup[] {
-  return imageGroups(doc, minLogos, maxTextPerLogo).map((g) => classify(doc, g.el, g.imgs));
+/**
+ * Logo groups: a labelled group counts from minLabelled images (two named clients are
+ * evidence); an unlabelled one is only considered from minUnlabelled.
+ */
+function logoGroups(doc: PageDoc, minLabelled: number, minUnlabelled: number, maxTextPerLogo: number): LogoGroup[] {
+  return imageGroups(doc, minLabelled, maxTextPerLogo).map((g) => classify(doc, g.el, g.imgs, minUnlabelled));
 }
+
+/** Images in the section a heading labels (its parent), outside the site header. */
+const imagesUnder = (doc: PageDoc, heading: Element) => {
+  const section = heading.parent && heading.parent.type === "tag" ? (heading.parent as Element) : heading;
+  return inSiteChrome(section) ? [] : imagesIn(doc, section);
+};
 
 /** Headings or links that announce a section without the section naming anyone. */
 function labelledOnly(doc: PageDoc, re: RegExp): Element | null {
@@ -222,6 +236,7 @@ const ACRONYM = /^[A-Z][A-Z&]{1,7}\b/;
 /** Statutory registrations and scorecards are not industry bodies (B-BBEE is human-only territory). */
 const NOT_A_BODY = /\b(CIPC|Companies and Intellectual Property|SARS|Revenue Service|Department of|Compensation Fund|UIF|VAT|B-?BBEE|BEE|Level \d)\b/;
 const ISO_CERT = /\bISO\s?(9001|14001|45001|27001|22000|13485|17025|50001)\b[^.]{0,40}?\b(certifi\w*|accredit\w*|registered|compliant)\b|\b(certifi\w*|accredit\w*)\b[^.]{0,40}?\bISO\s?(9001|14001|45001|27001|22000|13485|17025|50001)\b/i;
+const CERTIFICATION_WORDING = /\b(certified|certification|accredited|accreditation|approved|registered (plumbers?|electricians?|contractors?|installers?|practitioners?)|compliance certificates?|certificates? of compliance)\b/i;
 const ACCREDITATION_HEADING = /\b(accreditations?|memberships?|affiliations?|professional bodies|industry bodies|certifications?)\b/i;
 
 export const capacityChecks: CheckDefinition[] = [
@@ -267,12 +282,11 @@ export const capacityChecks: CheckDefinition[] = [
     severity: "info",
     version: V,
     description:
-      "Counts distinct postal addresses of the business in structured data (JSON-LD or microdata), ignoring event venues, job locations and people. PRESENT at min_distinct_locations (default 2). Never counted from prose; no structured addresses is INDETERMINATE.",
+      "Counts distinct postal addresses of the business in structured data (JSON-LD or microdata), ignoring event venues, job locations and people. PRESENT at min_distinct_locations (default 2). Never counted from prose. One address, or none, is INDETERMINATE: structured data often lists only the head office, so this check never claims a single location.",
     evidenceRecorded: "Each distinct structured address.",
     params: { min_distinct_locations: { default: 2, min: 2, max: 20, integer: true, description: "Distinct structured addresses that count as multiple locations" } },
     confidences: {
       confidence_present: { default: 0.85, min: 0.1, max: 1, description: "Confidence of the PRESENT result \"… distinct addresses in structured data\"" },
-      confidence_absent: { default: 0.6, min: 0.1, max: 1, description: "Confidence of the ABSENT result \"Structured data gives one address (branches not listed there are not counted)\"" },
     },
     run({ doc }, p) {
       const ld = jsonLd(doc);
@@ -282,7 +296,8 @@ export const capacityChecks: CheckDefinition[] = [
       const distinct = [...new Map(found.map((a) => [a.key, a])).values()];
       const ev = distinct.map((a) => ({ claim: "Structured postal address", value: a.label, locator: "structured data" }));
       if (distinct.length >= (p.min_distinct_locations as number)) return present(`${distinct.length} distinct addresses in structured data`, conf(p, "confidence_present"), ev);
-      if (distinct.length) return absent("Structured data gives one address (branches not listed there are not counted)", conf(p, "confidence_absent"), ev);
+      // One structured address is not evidence of one location: branches are often left out of it.
+      if (distinct.length) return indeterminate("Structured data gives one address; branches not listed there cannot be counted", ev);
       if (ld.unparseable) return indeterminate("Structured data is present but could not be read", [{ claim: "Unreadable JSON-LD blocks", value: String(ld.unparseable), locator: "script[type=application/ld+json]" }]);
       return indeterminate("No structured address data; locations are not counted from prose");
     },
@@ -343,26 +358,31 @@ export const capacityChecks: CheckDefinition[] = [
     severity: "info",
     version: V,
     description:
-      "PRESENT for a tight group of at least min_logos images with little text, labelled as clients or customers (heading, class or id, alt text, file path). A group labelled partners, both clients and sponsors, or unlabelled logos is INDETERMINATE: those look the same in markup as a sponsor wall.",
+      "PRESENT for a tight group of at least min_logos images (default 2) with little text, labelled as clients or customers (heading, class or id, alt text, file path): a B2B supplier naming two clients is evidence of scale. A single client logo is INDETERMINATE. A group labelled partners, both clients and sponsors, or at least min_unlabelled_logos unlabelled logos is INDETERMINATE: those look the same in markup as a sponsor wall.",
     evidenceRecorded: "The group's location, label, image count and alt texts.",
     params: {
-      min_logos: { default: 4, min: 2, max: 30, integer: true, description: "Images a group needs to count as a wall" },
+      min_logos: { default: 2, min: 2, max: 30, integer: true, description: "Images a client-labelled group needs to count" },
+      min_unlabelled_logos: { default: 4, min: 2, max: 30, integer: true, description: "Images an unlabelled logo group needs before it is treated as a possible client or sponsor wall" },
       max_text_chars_per_logo: { default: 40, min: 10, max: 200, integer: true, description: "A group with more visible text than this per image is content, not a logo wall" },
     },
     confidences: {
-      confidence_present: { default: 0.8, min: 0.1, max: 1, description: "Confidence of the PRESENT result \"A wall of … client logos\"" },
+      confidence_present: { default: 0.8, min: 0.1, max: 1, description: "Confidence of the PRESENT result \"… client logos under …\"" },
       confidence_absent: { default: 0.7, min: 0.1, max: 1, description: "Confidence of the ABSENT result" },
     },
     run({ doc }, p) {
-      const groups = logoGroups(doc, p.min_logos as number, p.max_text_chars_per_logo as number);
+      const groups = logoGroups(doc, p.min_logos as number, p.min_unlabelled_logos as number, p.max_text_chars_per_logo as number);
       if (groups.length && !doc.vocabularyReliable) return notEnglish(doc.lang);
       const clients = groups.find((g) => g.kind === "client");
-      if (clients) return present(`A wall of ${clients.count} client logos`, conf(p, "confidence_present"), [groupEvidence(doc, clients, "Client logo wall")]);
+      if (clients) return present(`${clients.count} client logos under "${clients.label}"`, conf(p, "confidence_present"), [groupEvidence(doc, clients, "Client logos")]);
       const unclear = groups.filter((g) => g.kind === "ambiguous");
       if (unclear.length) return indeterminate("A logo group is present but its label does not say whether these are clients or sponsors", unclear.map((g) => groupEvidence(doc, g, "Logo group, unclear whose")));
       if (!doc.vocabularyReliable) return notEnglish(doc.lang);
       const few = labelledOnly(doc, CLIENT_LABEL);
-      // Clients mentioned (e.g. "Trusted by") but no group of min_logos or more client logos.
+      // At the boundary: a client-labelled section showing one logo. Uncertain, not absent.
+      if (few && imagesUnder(doc, few).length >= 1) {
+        return indeterminate(`One client logo under "${textOf(doc.$, few)}"; fewer than ${p.min_logos} is not counted, and not ruled out either`, [{ claim: "Client heading with one logo", value: textOf(doc.$, few), locator: pathOf(few) }]);
+      }
+      // Clients mentioned (e.g. testimonials) but no client logos.
       const detail = few ? `Clients are mentioned ("${textOf(doc.$, few)}") but no group of ${p.min_logos} or more client logos` : "No client logo wall on the homepage";
       return absent(
         detail,
@@ -378,10 +398,11 @@ export const capacityChecks: CheckDefinition[] = [
     severity: "info",
     version: V,
     description:
-      "PRESENT for a group of at least min_sponsors logos, or links to that many distinct external sites, labelled as sponsors (partners together with sponsors counts). Sponsorship packages for sale are inventory, not sponsors. Partners alone, clients and sponsors together, unlabelled logos, or a sponsors heading or link that names no one are INDETERMINATE.",
+      "PRESENT for a group of at least min_sponsors logos (default 2), or links to that many distinct external sites, labelled as sponsors (partners together with sponsors counts). Sponsorship packages for sale are inventory, not sponsors. Partners alone, clients and sponsors together, unlabelled logos, or a sponsors heading or link that names no one are INDETERMINATE.",
     evidenceRecorded: "The section's location, label and the logos or links it names.",
     params: {
-      min_sponsors: { default: 3, min: 2, max: 30, integer: true, description: "Logos or distinct external links a sponsor section needs" },
+      min_sponsors: { default: 2, min: 2, max: 30, integer: true, description: "Logos or distinct external links a sponsor-labelled section needs" },
+      min_unlabelled_logos: { default: 4, min: 2, max: 30, integer: true, description: "Images an unlabelled logo group needs before it is treated as a possible client or sponsor wall" },
       max_text_chars_per_logo: { default: 40, min: 10, max: 200, integer: true, description: "A group with more visible text than this per image is content, not a logo wall" },
     },
     confidences: {
@@ -391,7 +412,7 @@ export const capacityChecks: CheckDefinition[] = [
     },
     run({ doc }, p) {
       const min = p.min_sponsors as number;
-      const groups = logoGroups(doc, min, p.max_text_chars_per_logo as number);
+      const groups = logoGroups(doc, min, p.min_unlabelled_logos as number, p.max_text_chars_per_logo as number);
       if (groups.length && !doc.vocabularyReliable) return notEnglish(doc.lang);
       const wall = groups.find((g) => g.kind === "sponsor");
       if (wall) return present(`A sponsor section with ${wall.count} logos`, conf(p, "confidence_present_1"), [groupEvidence(doc, wall, "Sponsor logo wall")]);
@@ -425,7 +446,7 @@ export const capacityChecks: CheckDefinition[] = [
     severity: "info",
     version: V,
     description:
-      "PRESENT for a statement naming a body the business belongs to or is accredited by ('members of the Legal Practice Council', 'registered with PIRB') or an ISO management-system certification. Product approvals ('SABS-approved hard hats'), statutory registrations (CIPC, SARS) and B-BBEE levels do not count. A heading such as 'Accreditations' with no body named is INDETERMINATE.",
+      "PRESENT for a statement naming a body the business belongs to or is accredited by ('members of the Legal Practice Council', 'registered with PIRB') or an ISO management-system certification. Product approvals ('SABS-approved hard hats'), statutory registrations (CIPC, SARS) and B-BBEE levels are never PRESENT. A heading such as 'Accreditations', or certification wording ('certified', 'SABS-approved', 'certificate of compliance') with no body named, is INDETERMINATE.",
     evidenceRecorded: "The membership statement or certification and where it appears.",
     confidences: {
       confidence_present_1: { default: 0.85, min: 0.1, max: 1, description: "Confidence of the PRESENT result \"An ISO management-system certification is stated\"" },
@@ -444,6 +465,10 @@ export const capacityChecks: CheckDefinition[] = [
       }
       const heading = visible(doc, HEADINGS).find((h) => ACCREDITATION_HEADING.test(textOf(doc.$, h)));
       if (heading) return indeterminate("An accreditation or membership section is present but names no body in text", [{ claim: "Accreditation heading", value: textOf(doc.$, heading), locator: pathOf(heading) }]);
+      // Near the boundary: certification or approval is claimed without naming who certifies.
+      // That is not evidence of membership, and not evidence of its absence either.
+      const vague = doc.text.match(CERTIFICATION_WORDING)?.[0];
+      if (vague) return indeterminate("Certification or approval is mentioned but no body is named", [{ claim: "Certification wording without a named body", value: vague, locator: "body text" }]);
       return absent("No accreditation or industry body membership stated on the homepage", conf(cfg, "confidence_absent"), [{ claim: "No membership statement matched", value: null, locator: "body" }]);
     },
   },

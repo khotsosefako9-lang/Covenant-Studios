@@ -26,16 +26,18 @@ const CONTROLS = [
     url: "https://bayplumbing.co.za/",
     name: "Bay Plumbing",
     info: [] as string[],
-    // One PostalAddress in JSON-LD: a single location.
-    capacity: { ...ABSENT_ALL, "capacity.multiple_locations": "ABSENT" },
+    // One PostalAddress in JSON-LD: not evidence of one location (Phase 11). "Certified
+    // installations with a certificate of compliance" names no body: uncertain, not absent.
+    capacity: { ...ABSENT_ALL, "capacity.accreditation": "INDETERMINATE" },
   },
   {
     file: "industrial.html",
     url: "https://ecsafety.co.za/",
     name: "EC Safety Supply",
     info: ["conv.whatsapp_link", "conv.pricing_info"],
-    // "Trusted by" with two logos is not a wall; "SABS-approved" is a product approval, not a membership.
-    capacity: ABSENT_ALL,
+    // Phase 11: two client logos under "Trusted by" are evidence of operating scale.
+    // "SABS-approved" and "certified" name no body: uncertain, not absent.
+    capacity: { ...ABSENT_ALL, "capacity.client_logo_wall": "PRESENT", "capacity.accreditation": "INDETERMINATE" },
   },
   {
     file: "rugby.html",

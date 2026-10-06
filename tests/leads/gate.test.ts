@@ -26,6 +26,8 @@ const input = (over: Partial<GateInput> = {}): GateInput => ({
   disqualifications: [],
   floorZar: 3500,
   params: { min_intent_strength: 0, min_capacity_markers: 2, min_capacity_confidence: 0.7 },
+  // A qualifying score unless a test says otherwise; the thresholds are tested on their own below.
+  score: { total: 70, confidence: 0.75, treatment: "queue_for_review", thresholds: { score: 55, confidence: 0.6 } },
   ...over,
 });
 
@@ -104,6 +106,30 @@ describe("the intent gate", () => {
   });
 
   it("names its parameters in the rule it records", () => {
-    expect(evaluateGate(input()).rule).toMatch(/^intent-gate\/1: .*decayed strength > 0.*≥ R3500.*≥ 2 capacity markers PRESENT at confidence ≥ 0.7/);
+    expect(evaluateGate(input()).rule).toMatch(/^intent-gate\/2: .*decayed strength > 0.*≥ R3500.*≥ 2 capacity markers PRESENT at confidence ≥ 0.7.*thresholds/);
+  });
+
+  describe("the qualification thresholds (Phase 11)", () => {
+    const passing = { intentSignals: [intent()] };
+    it("holds a lead that passes the gate but not the thresholds at WATCH, saying which and why", () => {
+      const low = evaluateGate(input({ ...passing, score: { total: 52.7, confidence: 0.61, treatment: "reject", thresholds: { score: 55, confidence: 0.6 } } }));
+      expect(low).toMatchObject({ systemState: "WATCH_WEAKNESS_ONLY", gateStatus: "PASSED", treatment: "reject" });
+      expect(low.reasons).toContain("The gate passed but the score does not qualify the lead");
+      expect(low.reasons.at(-1)).toMatch(/^Does not qualify: score 52.7, confidence 0.61/);
+    });
+
+    it("labels a high score with low confidence as needing verification, never as a contact", () => {
+      const o = evaluateGate(input({ ...passing, score: { total: 88, confidence: 0.41, treatment: "needs_verification", thresholds: { score: 55, confidence: 0.6 } } }));
+      expect(o).toMatchObject({ systemState: "WATCH_WEAKNESS_ONLY", treatment: "needs_verification" });
+      expect(o.reasons.at(-1)).toMatch(/^Needs verification: score 88.0, confidence 0.41/);
+    });
+
+    it("does not qualify on a high score without the gate", () => {
+      expect(evaluateGate(input({ score: { total: 95, confidence: 0.9, treatment: "queue_for_review", thresholds: { score: 55, confidence: 0.6 } } })).systemState).toBe("WATCH_WEAKNESS_ONLY");
+    });
+
+    it("does not qualify an unscored lead", () => {
+      expect(evaluateGate(input({ ...passing, score: null })).systemState).toBe("WATCH_WEAKNESS_ONLY");
+    });
   });
 });

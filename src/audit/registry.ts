@@ -9,7 +9,7 @@ import { type PageDoc, resolveHref, sameSite, visible } from "./document";
 import { type AuditContext, type CheckDefinition, type CheckResult, PRESENCE_CATEGORIES, type Severity } from "./types";
 
 /** Bump when any check's logic changes, so findings from different sets are not compared blindly. */
-export const CHECK_SET_VERSION = "m0.3";
+export const CHECK_SET_VERSION = "m0.4";
 
 export const ALL_CHECKS: readonly CheckDefinition[] = [...technicalChecks, ...conversionChecks, ...contentChecks, ...capacityChecks, ...commercialChecks];
 

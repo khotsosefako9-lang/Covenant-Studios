@@ -186,3 +186,30 @@ export async function liftDisqualification(db: Db, args: { disqualificationId: s
   const [lead] = await db.select({ companyId: s.leads.companyId }).from(s.leads).where(eq(s.leads.id, row.leadId));
   return evaluateLead(db, lead?.companyId as string, now);
 }
+
+/**
+ * Segment fit is an operator judgement (Phase 11): ICP criteria are not configured for
+ * automatic matching, so icp_fit can only be evaluated once someone assigns it. Re-evaluates
+ * the lead at once so the score reflects it.
+ */
+export async function setSegmentFit(
+  db: Db,
+  args: { companyId: string; fit: "fit" | "potentially_valid" | "not_fit"; segmentKey?: string; actor: string; reason: string; now?: Date },
+): Promise<LeadEvaluation> {
+  required(args.actor, args.reason);
+  const now = args.now ?? new Date();
+  let segmentId: string | null = null;
+  if (args.segmentKey) {
+    const [seg] = await db.select({ id: s.icpSegments.id }).from(s.icpSegments).where(eq(s.icpSegments.key, args.segmentKey));
+    if (!seg) throw new LeadActionError(`No ICP segment ${args.segmentKey}`);
+    segmentId = seg.id;
+  }
+  await db.transaction(async (tx) => {
+    const lead = await getOrCreateClusterLead(tx, args.companyId, now);
+    await tx
+      .update(s.leads)
+      .set({ segmentFit: args.fit, icpSegmentId: segmentId ?? lead.icpSegmentId, segmentFitSetBy: args.actor.trim(), segmentFitSetAt: now, segmentFitReason: args.reason.trim() })
+      .where(eq(s.leads.id, lead.id));
+  });
+  return evaluateLead(db, args.companyId, now);
+}

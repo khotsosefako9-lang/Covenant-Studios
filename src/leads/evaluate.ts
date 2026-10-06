@@ -12,6 +12,7 @@ import { parseSetting } from "@/db/validation";
 import { companySignalView, detectSignalsForAudit, loadAuditSnapshot } from "@/signals/detect";
 import type { FindingFact } from "@/signals/detectors";
 import { type GateOutcome, evaluateGate } from "./gate";
+import { type StoredScore, loadScoringContext, storeScore } from "./score";
 
 type Db = NodePgDatabase<typeof s>;
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
@@ -121,6 +122,7 @@ export interface LeadEvaluation {
   overridden: boolean;
   outcome: GateOutcome;
   steps: { detection: string; derivation: string };
+  score: StoredScore | null;
 }
 
 /**
@@ -149,7 +151,7 @@ export async function evaluateLead(db: Db, companyId: string, now = new Date()):
     await tx.select({ id: s.leads.id }).from(s.leads).where(eq(s.leads.id, lead.id)).for("update");
     await applyDetectedDisqualifiers(tx, lead.id, audits.completedId, findings, gateParams.min_disqualifier_confidence, now);
 
-    const outcome = evaluateGate({
+    const gateInput: Parameters<typeof evaluateGate>[0] = {
       latestAudit: audits.latest,
       completedAuditId: audits.completedId,
       intentSignals: view.signals
@@ -168,7 +170,19 @@ export async function evaluateLead(db: Db, companyId: string, now = new Date()):
       disqualifications: await activeDisqualifications(tx, lead.id),
       floorZar,
       params: gateParams,
-    });
+    };
+    let outcome = evaluateGate(gateInput);
+    // Score everything there is something to evaluate on (Phase 11), then decide the state
+    // with the score and its confidence against the qualification thresholds.
+    let stored: StoredScore | null = null;
+    if (outcome.systemState !== "PENDING_EVALUATION") {
+      const ctx = await loadScoringContext(db, { companyId, lead, auditId: audits.completedId, findings, now });
+      stored = await storeScore(tx, { leadId: lead.id, auditId: audits.completedId, ctx, now });
+      outcome = evaluateGate({
+        ...gateInput,
+        score: { total: stored.result.total, confidence: stored.result.confidence, treatment: stored.treatment, thresholds: ctx.thresholds },
+      });
+    }
 
     const [evaluation] = await tx
       .insert(s.leadEvaluations)
@@ -180,6 +194,8 @@ export async function evaluateLead(db: Db, companyId: string, now = new Date()):
         gateStatus: outcome.gateStatus,
         gateBasis: outcome.gateBasis,
         commercialPotentialZar: outcome.commercialPotentialZar,
+        scoreId: stored?.scoreId ?? null,
+        treatment: outcome.treatment,
         rule: outcome.rule,
         reasons: outcome.reasons,
         detail: outcome.detail,
@@ -206,6 +222,8 @@ export async function evaluateLead(db: Db, companyId: string, now = new Date()):
               intentGateEvaluatedAt: outcome.gateStatus === "NOT_EVALUATED" ? null : now,
             }),
         lastEvaluationId: evaluation.id,
+        ...(stored ? { currentScoreId: stored.scoreId } : {}),
+        scoreTreatment: outcome.treatment,
         updatedAt: now,
       })
       .where(eq(s.leads.id, lead.id));
@@ -231,6 +249,7 @@ export async function evaluateLead(db: Db, companyId: string, now = new Date()):
       overridden: current.stateOverride !== null,
       outcome,
       steps: { detection, derivation },
+      score: stored,
     };
   });
 }

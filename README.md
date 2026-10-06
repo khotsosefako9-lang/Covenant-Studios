@@ -56,7 +56,7 @@ weights, intent gate and benchmark dataset. Schema code lives in `src/db/schema/
 | Benchmark (evaluation only) | `benchmark_categories`, `benchmark_cases` |
 | Ingestion | `csv_import_rows` |
 | AI brief and cost | `ai_models`, `ai_runs`, `ai_run_packet_evidence`, `opportunity_briefs`, `brief_claims`, `brief_claim_evidence` |
-| Configuration | `service_categories`, `covenant_services`, `opportunity_types`, `opportunity_type_services`, `finding_opportunity_mappings`, `signal_types`, `signal_type_opportunity_types`, `icp_segments`, `icp_segment_services`, `disqualifiers`, `judgement_reasons`, `weight_sets`, `settings` |
+| Configuration | `service_categories`, `covenant_services`, `opportunity_types`, `opportunity_type_services`, `signal_types`, `signal_type_opportunity_types`, `icp_segments`, `icp_segment_services`, `disqualifiers`, `judgement_reasons`, `weight_sets`, `settings` |
 | Operations | `system_events` |
 
 There is no generic `leads` mega-table: a lead holds only the pursuit state, the intent gate and a
@@ -568,7 +568,7 @@ default read path.
 
 ### Not detected automatically, and why
 
-The other 14 types are recorded only by an operator (`npm run signals -- add …`). An operator signal
+The other 13 types are recorded only by an operator (`sponsorship_inventory` became detectable in Phase 10) (`npm run signals -- add …`). An operator signal
 rests on an attributed statement stored as REPORTED evidence.
 
 | Signal | Why not automated |
@@ -577,13 +577,13 @@ rests on an attributed statement stored as REPORTED evidence.
 | `agency_fatigue` | Human-only (Phase 8): a claim about dissatisfaction with a supplier that no homepage evidences unambiguously; trigger-enforced from migration 0007 |
 | `matchday_scramble`, `matchday_content_friction`, `attendance_opportunity` | Need social posting history or ticketing context; social audit is not in M0 |
 | `brand_upgrade_need` | Needs a cross-channel comparison of marks and presentation |
-| `high_value_products`, `urgent_service_model`, `sponsorship_inventory`, `manual_order_handling` | Need reading page prose; no deterministic finding evidences them |
+| `high_value_products`, `urgent_service_model`, `manual_order_handling` | Need reading page prose; no deterministic finding evidences them |
 | `audience_scale` | Audience figures are not observable from a page and must not be estimated |
 | `rfq_friction` | No check isolates the quotation path from general enquiry friction |
 | `whatsapp_conversion_opportunity`, `pricing_opacity` | Friction only for some segments; absence alone fires on most well-built sites |
 
-**Consequence: no automated detector produces an Intent signal in M0.** Intent comes from operators,
-or later from the commercial-potential floor (Phase 10).
+**Consequence in Phase 8: no automated detector produced an Intent signal.** Phase 10 adds one,
+`sponsorship_inventory`, from an explicit sponsorship offer; see Phase 10.
 
 ### The web_underperformance rule
 
@@ -596,7 +596,7 @@ operator edit can move it.
 
 ### Signal → opportunity type (configuration)
 
-`signal_type_opportunity_types` has 24 rows, all `config_origin = default`. They are derived from the
+`signal_type_opportunity_types` has 24 rows (26 from Phase 10), all `config_origin = default`. They are derived from the
 Phase 0 benchmark reasoning and the mapping table, not documented Covenant facts. `procurement_scorecard`
 and `agency_fatigue` are deliberately unmapped, because no documented service follows from them.
 Phase 9 added a `preference` per row (the array order in `src/db/seed-data.ts`) and the derivation that
@@ -604,7 +604,8 @@ reads them.
 
 ### Regression
 
-The six control sites produce **no signals at all**: zero on Intent, zero on Opportunity. This runs
+The six control sites produce **no signals at all**: zero on Intent, zero on Opportunity (from Phase 10
+the rugby union's sponsorship offer gives it one `sponsorship_inventory` signal). This runs
 in the signal test suite on every `npm test`. New invariants check that every active signal cites
 evidence, that no rule-detected signal has a human-only type, and that no signal predates its evidence.
 
@@ -701,16 +702,151 @@ never evidence rows.
 - Each opportunity stores its type, service, rank, relevance, confidence, rationale and inference rule.
   It also stores the signals (`opportunity_signals`) and findings (`opportunity_findings`) it rests on.
 - Re-deriving with nothing changed is a no-op. Otherwise the current set is superseded, never deleted.
-- `finding_opportunity_mappings` (Phase 2) is not used: findings reach opportunity types only through
-  signals, so every opportunity rests on a signal. The `finding_opportunity_mappings_unused` invariant
+- `finding_opportunity_mappings` (Phase 2) was not used and was dropped in Phase 10 (migration 0009):
+  the chain is signal-mediated, so every opportunity rests on a signal. Until then the `finding_opportunity_mappings_unused` invariant
   flags any active row, so a row there cannot look live and do nothing.
 
 New invariants: `capacity_not_signal`, `opportunity_rests_on_signal`, `current_opportunity_signals_active`
-(re-derive after a re-audit), `opportunity_support_same_company`, and `finding_opportunity_mappings_unused`.
+(re-derive after a re-audit) and `opportunity_support_same_company` (plus `finding_opportunity_mappings_unused`, removed with the table).
 
 ```sh
 npm run opportunities -- derive <companyId>
 npm run opportunities -- list   <companyId> [--history]
+```
+
+## Phase 10 — intent gate and lead state machine
+
+### Corrections carried in from Phase 9
+
+- **`sponsorship_inventory` is detected.** A new check, `commercial.sponsorship_offer`, records an
+  explicit offer to sell sponsorship: "Sponsorship packages", "Become a sponsor", "Sponsor the club",
+  or an offer page path such as `/sponsorship-packages/`. A generic "Partner with us", thanks to
+  existing sponsors, "Sponsor a child" and a bare "Sponsorship" link do not count; the bare link is
+  INDETERMINATE. An offer made only in prose is PRESENT at confidence 0.7. The detector needs 0.8, so
+  by default prose alone raises no signal. The signal evidences commercial inventory to sell, which is
+  the sports ICP's defining criterion, not existing sponsors. Its type's axis is Intent, so it is the
+  **one automated Intent route** in M0.
+- **Trade mappings reordered.** `urgent_service_model` and `whatsapp_conversion_opportunity` now map
+  to `website_rebuild` (1) then `conversion_landing_page` (2), following the Proximus Plumbing case
+  (26 mapping rows). Neither type is automated, so this affects operator-recorded signals only.
+- **`finding_opportunity_mappings` dropped** (migration 0009); its invariant went with it.
+- **Each check's confidence in each of its outcomes is configuration**: 105 values across 38 checks,
+  `confidence_<status>[_n]`, stored in `audit_checks.params` beside the thresholds, bounded 0.1–1.
+  Their names and descriptions come from each result's own detail text (`npm run thresholds -- list`).
+  The defaults are pinned in `tests/audit/confidence-pins.json`. INDETERMINATE (0) and
+  NOT_APPLICABLE (1) are not judgements and stay fixed. Probe limits stay deferred.
+
+`commercial.procurement_portal` is the second new commercial-offer check. It records the organisation's
+own tender or supply-chain process: "Current tenders", "Supply chain management", "Supplier registration",
+or such a path. A path alone is confidence 0.7. Links to national portals (eTenders, CSD), which
+suppliers also carry, and tendering mentioned in prose do not count. Category `commercial` behaves like
+`capacity` (PRESENT/ABSENT, no severity) but feeds named rules: the sponsorship signal and the
+`bureaucratic_procurement` disqualifier. Check set `m0.3`.
+
+### States and the gate (`src/leads/gate.ts`, pure)
+
+| State | When |
+| --- | --- |
+| `PENDING_EVALUATION` | Nothing to evaluate: no completed audit, and no operator signal, opportunity or disqualification |
+| `DISQUALIFIED` | Any active disqualification, whatever the gate says |
+| `COMMERCIAL_OPPORTUNITY` | Gate passed **and** an opportunity derived |
+| `WATCH_WEAKNESS_ONLY` | Evaluated, and none of the above (weakness without intent, or nothing at all) |
+| `OUTREACH_READY` | Never set by the system. Needs a human YES (Phase 13) |
+
+The gate (`intent_gate` setting) has two routes:
+
+1. **buying_signal**: an active Intent-axis signal with decayed strength above `min_intent_strength`
+   (default 0, i.e. any live signal inside its decay window).
+2. **commercial_potential_floor**: the best current opportunity's entry price is at or above
+   `commercial_potential_floor_zar` (R3,500), **and** the latest audit shows at least
+   `min_capacity_markers` (default 2) capacity markers PRESENT at `min_capacity_confidence` (0.7).
+   - Only project and bundle prices are entry prices (the floor's own definition): retainers,
+     add-ons, per-piece work and unpublished prices never count.
+   - A price alone says what Covenant would charge, not whether the business can pay it, so without
+     capacity evidence there is no commercial potential.
+
+Weakness never passes the gate on either route.
+
+### Recording
+
+- **`lead_evaluations`** (immutable) stores every evaluation: system state, gate status and basis,
+  commercial potential, the rule with its parameters, the reasons, and the inputs by id.
+- **`lead_state_transitions`** (immutable) stores every change of effective state, with its cause
+  (`created`, `evaluation`, `human_override`, `override_cleared`, `merge`, `unmerge`), actor and timestamp.
+- **Human override** (`npm run leads -- override`) needs an actor and a reason. `system_lead_state`
+  and `system_gate_*` keep the system's values beside the human ones and keep being recomputed. The
+  database enforces `lead_state = coalesce(state_override, system_lead_state)`. Overriding to
+  COMMERCIAL_OPPORTUNITY passes the effective gate by `human_override` with the same actor and reason.
+- **OUTREACH_READY is unreachable automatically.** A check stops the system from producing it. The
+  override code refuses it. A trigger requires a human override to it, a review judgement of YES, and
+  a channel not marked unsuitable. Review judgements need a score, and none exists yet, so in practice
+  it is unreachable until Phase 13.
+
+### Disqualifiers and channel suitability
+
+- **Human-only disqualifiers** (zero-revenue, micro-operator, no decision-maker access, ethical
+  misalignment) are recorded by an operator on an attributed statement (REPORTED operator evidence),
+  as `npm run leads -- disqualify`. The Phase 3 trigger refuses them on any other evidence. A check
+  forbids giving a human-only rule a detection check.
+- **`bureaucratic_procurement`** fires from code on `commercial.procurement_portal` PRESENT at
+  `min_disqualifier_confidence` (0.8), via `disqualifiers.detection_check_key`. Like friction signals,
+  it lives with the audit that evidenced it and is retracted when a newer audit no longer shows it.
+  Any disqualification can be lifted with a reason and is kept as history.
+- **Channel suitability** (`npm run leads -- channel`) is separate and operator-set. A fit business
+  can be `cold_outreach_disallowed` and stay COMMERCIAL_OPPORTUNITY; it only blocks OUTREACH_READY.
+
+### One business, one open lead (the Phase 4 deferred item)
+
+`src/leads/merge.ts`, inside the merge and unmerge transactions:
+
+- **Only one company has an open lead:** that lead becomes the cluster's lead. Nothing moves; it is
+  found through the cluster read path.
+- **Both companies have one:** one survives and the other is closed (`closed_reason = 'merged'`,
+  pointing at the survivor). The survivor is the lead carrying a human state override when exactly
+  one does, otherwise the kept company's lead.
+  - Reasoning: a merge is an identity decision, not a pursuit decision. It must not silently
+    discard what a human decided about the business.
+  - Without that, the kept company is the natural home, since it is the root that cluster reads resolve to.
+- The closed lead's evaluations, judgements, disqualifications and transitions stay on it as history.
+- **Opportunities:** current opportunities of both companies are superseded. They interpret one
+  identity's evidence, and the next evaluation re-derives on the merged cluster. Without this an unmerge
+  left opportunities resting on the other business's signals; the end-to-end test caught exactly that.
+- **Unmerge:** reopens exactly the leads that merge closed, and supersedes again.
+
+### One pipeline command
+
+`npm run pipeline -- <companyId>… | --all [--skip-audit]` runs `src/pipeline/run.ts` for each business,
+in order:
+
+1. Audit through the fetch layer.
+2. Detect signals on the latest completed audit.
+3. Derive opportunities.
+4. Fire detected disqualifiers.
+5. Gate and record.
+
+Evaluation itself re-runs detection and derivation, which are idempotent. So no path evaluates a lead,
+or later writes a brief, on stale opportunities.
+
+New invariants: `one_open_lead_per_cluster`, `lead_state_matches_last_transition`,
+`lead_system_matches_last_evaluation`, `system_qualified_has_opportunity`,
+`system_disqualified_has_disqualification`, `disqualifier_detection_check_valid`.
+
+### What the gate does to the controls and the weak fixture
+
+From `tests/leads/pipeline.test.ts`, with the default settings:
+
+| Fixture | State | Why |
+| --- | --- | --- |
+| plumber, industrial, lawfirm, nextjs-ssr, wordpress | WATCH_WEAKNESS_ONLY | No Intent signal, no opportunity, no weakness |
+| rugby | **COMMERCIAL_OPPORTUNITY** | `sponsorship_inventory` (rule, 0.70) passes route 1; opportunity `sports_platform` → Sports Platform Build (R45,000). Route 2 fails: 0 of 2 capacity markers |
+| weak supplier | WATCH_WEAKNESS_ONLY | `website_rebuild` → Custom Business Website (R5,500), but no Intent and 0 of 2 capacity markers |
+
+```sh
+npm run pipeline -- <companyId>
+npm run leads -- show <companyId>
+npm run leads -- override <companyId> --state COMMERCIAL_OPPORTUNITY --reason "..." --by "Khotso"
+npm run leads -- channel <companyId> --value cold_outreach_disallowed --reason "..." --by "Khotso"
+npm run leads -- disqualify <companyId> --disqualifier zero_revenue_speculative --reason "<basis>" --by "Khotso"
 ```
 
 ## Running locally
@@ -742,15 +878,15 @@ and target phase, and are not built in M0.
 | `evidence_derivations` (links an `INFERRED` evidence row to the evidence it was reasoned from) | Dropped in Phase 3: no M0 component writes `INFERRED` evidence rows | A layer that writes inferred facts, e.g. AI industry classification | Full inference chains for inferred company facts | M1 |
 | Operator UI for manual entry, CSV upload and duplicate resolution | No authentication yet; the CLI covers M0 operation | Auth, lead review UI | Operator workflow without a terminal | Phase 12 / M1 |
 | CSV enrichment of an existing company | An exact domain match writes nothing, so a CSV cannot add evidence to a company that already exists | A rule for attributing new REPORTED evidence to an existing identity | Keeping records current from repeat imports | M4 |
-| Lead reconciliation on merge | A merge leaves each company's leads where they are, so a cluster can hold two open leads | Lead state machine (Phases 10–11) | One pursuit per business | Phase 10 |
 | Cross-process rate limiting | The per-host limiter is in-process; M0 runs one fetching worker | A second worker process | Politeness held across processes and restarts (advisory lock + next-request time per host) | Before scaling workers |
 | Reading the contact page | The audit reads the homepage only; form checks are INDETERMINATE when a contact page is linked | A second page fetch per audit within the host budget | Fewer INDETERMINATE form results | After the benchmark shows how often it matters |
 | True total page weight | Needs every asset downloaded: dozens of extra requests per prospect | Approval to spend the politeness budget on assets | A real page-weight figure | Not before M1 |
 | Wording checks in Afrikaans and isiXhosa | Vocabulary checks are English-only and abstain elsewhere | Bilingual vocabulary lists checked by a fluent speaker | Fewer INDETERMINATE results on SA sites | After the benchmark |
 | `/bot` page on covenant-studios.co.za | The User-Agent should point site owners at an explanation and an opt-out | The Covenant website being updated | Site owners can identify and contact the crawler | Next time the site is touched |
 | Deterministic checks that evidence Intent (ticketing, "new branch" announcements) | Phase 9's capacity checks (careers, branches, shop, logo walls, sponsors, accreditation) evidence scale, not intent, and feed commercial potential; automated Intent stays zero in M0 | A Phase 6-style check extension held to the control set | Automated intent candidates for operator review | If the benchmark shows the intent gate starved |
-| Per-result confidences and probe limits as configuration | Thresholds and detector strengths are configuration from Phase 9. A check's confidence in each of its own outcomes (e.g. 0.85) and the probe limits (5 links, 3 PDFs, 4 profiles) are still literals, versioned with the check and pinned by the control set | Benchmark evidence of which confidences are miscalibrated | Calibrated confidences | After the benchmark |
-| Commercial-potential scoring from capacity | `capacityProfile()` exposes the evidence; no score is computed in Phase 9 | Scoring (Phase 10) | The second route through the intent gate | Phase 10 |
+| Probe limits as configuration | Thresholds, detector strengths and (Phase 10) each check's confidence in its outcomes are configuration. The probe limits (5 links, 3 PDFs, 4 profiles) are still literals | Benchmark evidence that the limits matter | Tunable politeness spend per audit | After the benchmark |
+| The weighted score (seven dimensions, `qualify_score_threshold` 55, `qualify_confidence_threshold` 0.6) | Phase 10 builds the gate and state machine, not the score; COMMERCIAL_OPPORTUNITY means gate passed and an opportunity derived, with no score threshold applied yet | Scoring phase | Ranking within COMMERCIAL_OPPORTUNITY | Next scoring phase |
+| Automatic channel suitability | Set by an operator only; nothing in M0 infers it | Evidence of a procurement-only buyer that is not a disqualifier | Fewer unsuitable cold approaches | After the benchmark |
 | Segment-aware friction signals (`whatsapp_conversion_opportunity`, `pricing_opacity`) | They are friction only in some segments; they fire wrongly without one | ICP segment assignment on companies | Segment-relevant opportunity signals | After ICP segments are configured |
 | Rendering JavaScript-only pages | Phase 0 makes headless rendering opt-in per check; no browser in Phase 5 | The audit check set (Phase 6) identifying checks that need it | Audits of JS-only sites | Phase 6 or later, with approval |
 | Charset from `<meta charset>` | The body is decoded by the `Content-Type` charset, else UTF-8; reading `<meta>` is parsing | Phase 6 parsing | Correct text on pages that declare their charset only in HTML | Phase 6 |

@@ -171,7 +171,6 @@ describe.skipIf(!adminUrl)("opportunity derivation end to end", () => {
       `insert into opportunities (company_id, opportunity_type_id, rank, relevance, confidence, rationale, inference_rule) select $1, id, 9, 0.5, 0.3, 'r', 'rule' from opportunity_types where key = 'branding'`,
       [companyId],
     );
-    await pool.query(`insert into finding_opportunity_mappings (check_key, opportunity_type_id) select 'tech.title', id from opportunity_types where key = 'website_rebuild'`);
     const other = await addCompanyManually(db, { input: { name: "Elsewhere Ltd", website: "elsewhere.co.za" }, actor: "test" });
     if (!other.ok) throw new Error("company");
     const o = (await getCompanyOpportunities(db, companyId)).find((x) => x.typeKey === "website_rebuild");
@@ -183,7 +182,7 @@ describe.skipIf(!adminUrl)("opportunity derivation end to end", () => {
 
     const violated = (await runInvariants(db)).filter((r) => r.status === "violated").map((r) => r.key);
     expect(violated.sort()).toEqual(
-      ["capacity_not_signal", "finding_opportunity_mappings_unused", "opportunity_rests_on_signal", "opportunity_support_same_company", "signal_cites_evidence"].sort(),
+      ["capacity_not_signal", "opportunity_rests_on_signal", "opportunity_support_same_company", "signal_cites_evidence"].sort(),
     );
   });
 });

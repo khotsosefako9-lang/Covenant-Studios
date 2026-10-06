@@ -97,7 +97,7 @@ export const auditStatus = pgEnum("audit_status", [
 
 // capacity (Phase 9): markers of operating scale. They feed commercial potential, never a
 // weakness and never Intent.
-export const auditCheckCategory = pgEnum("audit_check_category", ["technical", "conversion", "content", "capacity"]);
+export const auditCheckCategory = pgEnum("audit_check_category", ["technical", "conversion", "content", "capacity", "commercial"]);
 
 export const auditBlockReason = pgEnum("audit_block_reason", [
   "robots_disallow",
@@ -163,6 +163,16 @@ export const intentGateBasis = pgEnum("intent_gate_basis", [
   "buying_signal",
   "commercial_potential_floor",
   "human_override",
+]);
+
+// Why a lead's state changed (Phase 10). Every transition is recorded with one of these.
+export const leadTransitionCause = pgEnum("lead_transition_cause", [
+  "created",
+  "evaluation",
+  "human_override",
+  "override_cleared",
+  "merge",
+  "unmerge",
 ]);
 
 export const segmentFit = pgEnum("segment_fit", ["fit", "potentially_valid", "not_fit", "unknown"]);

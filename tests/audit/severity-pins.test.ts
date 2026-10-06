@@ -2,7 +2,9 @@
 // deliberate edit to this file, reviewed alongside the control set, never a silent drift.
 // Runs before every production build (see "prebuild" in package.json).
 import { describe, expect, it } from "vitest";
-import { ALL_CHECKS, CHECK_SET_VERSION } from "@/audit/registry";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { ALL_CHECKS, CHECK_SET_VERSION, paramSpecsOf } from "@/audit/registry";
 
 const PINNED: Record<string, string> = {
   "tech.https": "high",
@@ -42,6 +44,9 @@ const PINNED: Record<string, string> = {
   "capacity.client_logo_wall": "info",
   "capacity.sponsor_section": "info",
   "capacity.accreditation": "info",
+  // Commercial-offer checks (Phase 10) never FAIL either.
+  "commercial.sponsorship_offer": "info",
+  "commercial.procurement_portal": "info",
 };
 
 describe("check set regression pins", () => {
@@ -49,14 +54,15 @@ describe("check set regression pins", () => {
     expect(Object.fromEntries(ALL_CHECKS.map((c) => [c.key, c.severity]))).toEqual(PINNED);
   });
 
-  it("is check set version m0.2 (bump the version when check logic changes)", () => {
-    expect(CHECK_SET_VERSION).toBe("m0.2");
+  it("is check set version m0.3 (bump the version when check logic changes)", () => {
+    expect(CHECK_SET_VERSION).toBe("m0.3");
   });
 
   // Thresholds are configuration (audit_checks.params). Their code defaults are pinned here
   // too: a default that moves changes what the control set is tested against.
   it("has the pinned threshold defaults", () => {
     const defaults = Object.fromEntries(ALL_CHECKS.filter((c) => c.params).map((c) => [c.key, Object.fromEntries(Object.entries(c.params ?? {}).map(([k, v]) => [k, v.default]))]));
+    expect(ALL_CHECKS.flatMap((c) => Object.keys(c.params ?? {})).filter((k) => k.startsWith("confidence_"))).toEqual([]);
     expect(defaults).toEqual({
       "tech.html_weight": { max_html_bytes: 1_000_000 },
       "tech.response_time": { max_response_ms: 3000 },
@@ -73,6 +79,33 @@ describe("check set regression pins", () => {
   });
 
   it("every default lies within the bounds an operator may set", () => {
-    for (const c of ALL_CHECKS) for (const [k, v] of Object.entries(c.params ?? {})) expect(v.default >= v.min && v.default <= v.max, `${c.key}.${k}`).toBe(true);
+    for (const c of ALL_CHECKS) for (const [k, v] of Object.entries(paramSpecsOf(c))) expect(v.default >= v.min && v.default <= v.max, `${c.key}.${k}`).toBe(true);
+  });
+
+  // Each check's confidence in each of its outcomes is configuration too (Phase 10). The
+  // defaults are pinned in a reviewed file: changing one is a deliberate edit, like a severity.
+  it("has the pinned confidence defaults", () => {
+    const actual = Object.fromEntries(
+      ALL_CHECKS.filter((c) => c.confidences).map((c) => [c.key, Object.fromEntries(Object.entries(c.confidences ?? {}).map(([k, v]) => [k, v.default]))]),
+    );
+    expect(actual).toEqual(JSON.parse(readFileSync(join(__dirname, "confidence-pins.json"), "utf8")));
+  });
+
+  it("every check that judges something declares its confidences", () => {
+    expect(ALL_CHECKS.filter((c) => !c.confidences || !Object.keys(c.confidences).length).map((c) => c.key)).toEqual([]);
+  });
+});
+
+describe("confidences are configuration", () => {
+  it("a stored confidence is the one the result carries, and an out-of-bounds one is refused", async () => {
+    const { ctxFor } = await import("./helpers");
+    const { evaluate, resolveCheckParams } = await import("@/audit/registry");
+    const html = "<!doctype html><html lang='en'><head><title>x</title></head><body><h1>x</h1></body></html>";
+    const [byDefault] = evaluate(ctxFor(html), new Set(["tech.viewport_meta"]));
+    expect(byDefault?.result).toMatchObject({ status: "FAIL", confidence: 0.95 });
+    const params = resolveCheckParams({ "tech.viewport_meta": { confidence_fail_1: 0.7 } });
+    const [configured] = evaluate(ctxFor(html), new Set(["tech.viewport_meta"]), params);
+    expect(configured?.result).toMatchObject({ status: "FAIL", confidence: 0.7 });
+    expect(() => resolveCheckParams({ "tech.viewport_meta": { confidence_fail_1: 0 } })).toThrow(/tech.viewport_meta/);
   });
 });

@@ -8,6 +8,9 @@ import { ctxFor, fixture, run } from "./helpers";
 
 // Capacity results (Phase 9). Controls firing here is expected and correct: these record
 // operating scale, not weakness. Pinned so that any change in what they fire on is reviewed.
+// Commercial-offer results (Phase 10): only the rugby union offers sponsorship for sale.
+const NO_OFFERS = { "commercial.sponsorship_offer": "ABSENT", "commercial.procurement_portal": "ABSENT" };
+
 const ABSENT_ALL = {
   "capacity.careers_page": "ABSENT",
   "capacity.multiple_locations": "INDETERMINATE",
@@ -41,6 +44,8 @@ const CONTROLS = [
     info: ["conv.whatsapp_link"],
     // An "Our sponsors" heading and a /sponsors/ link, but no sponsor named on the page.
     capacity: { ...ABSENT_ALL, "capacity.sponsor_section": "INDETERMINATE" },
+    // "Sponsorship packages" (a link and the text beside it): commercial inventory for sale.
+    offers: { ...NO_OFFERS, "commercial.sponsorship_offer": "PRESENT" },
   },
   {
     file: "lawfirm.html",
@@ -61,7 +66,7 @@ const CONTROLS = [
   { file: "wordpress.html", url: "https://reelcoast.co.za/", name: "Reel Coast Studios", info: ["conv.whatsapp_link"], capacity: ABSENT_ALL },
 ];
 
-describe.each(CONTROLS)("control: $file", ({ file, url, name, info, capacity }) => {
+describe.each(CONTROLS.map((c) => ({ offers: NO_OFFERS, ...c })))("control: $file", ({ file, url, name, info, capacity, offers }) => {
   const html = fixture(`controls/${file}`);
   const results = run(html, { url, companyName: name });
 
@@ -88,6 +93,11 @@ describe.each(CONTROLS)("control: $file", ({ file, url, name, info, capacity }) 
   it("records exactly the pinned capacity results, none of them a FAIL", () => {
     const observed = Object.fromEntries(results.filter((r) => r.check.category === "capacity").map((r) => [r.check.key, r.result.status]));
     expect(observed).toEqual(capacity);
+  });
+
+  it("records exactly the pinned commercial-offer results", () => {
+    const observed = Object.fromEntries(results.filter((r) => r.check.category === "commercial").map((r) => [r.check.key, r.result.status]));
+    expect(observed).toEqual(offers);
   });
 
   it("has no check errors", () => {

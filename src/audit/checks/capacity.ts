@@ -9,7 +9,7 @@
 import type { Element } from "domhandler";
 import { type PageDoc, excerptOf, jsonLd, ldTypes, pathOf, resolveHref, sameSite, textOf, visible } from "../document";
 import type { CheckDefinition, EvidenceItem } from "../types";
-import { absent, indeterminate, notEnglish, present } from "./result";
+import { absent, indeterminate, notEnglish, present, conf } from "./result";
 
 const V = "1";
 
@@ -234,9 +234,14 @@ export const capacityChecks: CheckDefinition[] = [
     description:
       "PRESENT for a link to a careers or vacancies page (path or link text), a careers/jobs subdomain or recruitment platform, or JobPosting structured data. A link labelled only 'Jobs' is INDETERMINATE: trade sites use it for completed work.",
     evidenceRecorded: "The careers link, recruitment-platform link or JobPosting entry.",
-    run({ doc }) {
+    confidences: {
+      confidence_present_1: { default: 0.9, min: 0.1, max: 1, description: "Confidence of the PRESENT result \"The page publishes a job posting in structured data\"" },
+      confidence_present_2: { default: 0.9, min: 0.1, max: 1, description: "Confidence of the PRESENT result \"A careers or vacancies page is linked\"" },
+      confidence_absent: { default: 0.75, min: 0.1, max: 1, description: "Confidence of the ABSENT result \"No careers or vacancies link on the homepage\"" },
+    },
+    run({ doc }, cfg) {
       if (jsonLd(doc).items.some((i) => ldTypes(i).includes("JobPosting"))) {
-        return present("The page publishes a job posting in structured data", 0.9, [{ claim: "JobPosting structured data", value: null, locator: "script[type=application/ld+json]" }]);
+        return present("The page publishes a job posting in structured data", conf(cfg, "confidence_present_1"), [{ claim: "JobPosting structured data", value: null, locator: "script[type=application/ld+json]" }]);
       }
       let jobsOnly: Element | null = null;
       for (const el of visible(doc, "a[href]")) {
@@ -247,12 +252,12 @@ export const capacityChecks: CheckDefinition[] = [
         const careersHost = /^(careers|jobs)\./i.test(u.hostname) || RECRUITMENT_HOSTS.test(u.hostname) || (/linkedin\.com$/i.test(u.hostname) && segs.includes("jobs"));
         const careersPath = sameSite(u, doc.url) && segs.some((s) => CAREER_SEGMENT.test(s));
         const careersText = doc.vocabularyReliable && CAREER_TEXT.test(text);
-        if (careersHost || careersPath || careersText) return present("A careers or vacancies page is linked", 0.9, [linkEvidence(doc, el, "Careers link")]);
+        if (careersHost || careersPath || careersText) return present("A careers or vacancies page is linked", conf(cfg, "confidence_present_2"), [linkEvidence(doc, el, "Careers link")]);
         if (!jobsOnly && sameSite(u, doc.url) && (segs.some((s) => JOB_SEGMENT.test(s)) || JOB_TEXT.test(text))) jobsOnly = el;
       }
       if (jobsOnly) return indeterminate("A 'jobs' page is linked; it may list vacancies or completed work, and was not read", [linkEvidence(doc, jobsOnly, "Jobs link")]);
       if (!doc.vocabularyReliable) return notEnglish(doc.lang);
-      return absent("No careers or vacancies link on the homepage", 0.75, [{ claim: "No careers link matched", value: null, locator: "body" }]);
+      return absent("No careers or vacancies link on the homepage", conf(cfg, "confidence_absent"), [{ claim: "No careers link matched", value: null, locator: "body" }]);
     },
   },
   {
@@ -265,6 +270,10 @@ export const capacityChecks: CheckDefinition[] = [
       "Counts distinct postal addresses of the business in structured data (JSON-LD or microdata), ignoring event venues, job locations and people. PRESENT at min_distinct_locations (default 2). Never counted from prose; no structured addresses is INDETERMINATE.",
     evidenceRecorded: "Each distinct structured address.",
     params: { min_distinct_locations: { default: 2, min: 2, max: 20, integer: true, description: "Distinct structured addresses that count as multiple locations" } },
+    confidences: {
+      confidence_present: { default: 0.85, min: 0.1, max: 1, description: "Confidence of the PRESENT result \"… distinct addresses in structured data\"" },
+      confidence_absent: { default: 0.6, min: 0.1, max: 1, description: "Confidence of the ABSENT result \"Structured data gives one address (branches not listed there are not counted)\"" },
+    },
     run({ doc }, p) {
       const ld = jsonLd(doc);
       const found: Address[] = [];
@@ -272,8 +281,8 @@ export const capacityChecks: CheckDefinition[] = [
       found.push(...microdataAddresses(doc));
       const distinct = [...new Map(found.map((a) => [a.key, a])).values()];
       const ev = distinct.map((a) => ({ claim: "Structured postal address", value: a.label, locator: "structured data" }));
-      if (distinct.length >= (p.min_distinct_locations as number)) return present(`${distinct.length} distinct addresses in structured data`, 0.85, ev);
-      if (distinct.length) return absent("Structured data gives one address (branches not listed there are not counted)", 0.6, ev);
+      if (distinct.length >= (p.min_distinct_locations as number)) return present(`${distinct.length} distinct addresses in structured data`, conf(p, "confidence_present"), ev);
+      if (distinct.length) return absent("Structured data gives one address (branches not listed there are not counted)", conf(p, "confidence_absent"), ev);
       if (ld.unparseable) return indeterminate("Structured data is present but could not be read", [{ claim: "Unreadable JSON-LD blocks", value: String(ld.unparseable), locator: "script[type=application/ld+json]" }]);
       return indeterminate("No structured address data; locations are not counted from prose");
     },
@@ -287,26 +296,33 @@ export const capacityChecks: CheckDefinition[] = [
     description:
       "PRESENT for a cart, basket or checkout link, an add-to-cart control, or a hosted-store platform (Shopify, Ecwid). INDETERMINATE when only a shop link, WooCommerce assets or priced products are present: a catalogue without a cart is not a shop.",
     evidenceRecorded: "The cart link, add-to-cart control or platform asset.",
-    run({ doc }) {
+    confidences: {
+      confidence_present_1: { default: 0.9, min: 0.1, max: 1, description: "Confidence of the PRESENT result \"A cart or checkout is linked\"" },
+      confidence_present_2: { default: 0.9, min: 0.1, max: 1, description: "Confidence of the PRESENT result \"An add-to-cart control is on the page\"" },
+      confidence_present_3: { default: 0.85, min: 0.1, max: 1, description: "Confidence of the PRESENT result \"A cart or checkout control is on the page\"" },
+      confidence_present_4: { default: 0.8, min: 0.1, max: 1, description: "Confidence of the PRESENT result \"The site runs on a hosted store platform\"" },
+      confidence_absent: { default: 0.75, min: 0.1, max: 1, description: "Confidence of the ABSENT result \"No cart, checkout, add-to-cart or store platform on the homepage\"" },
+    },
+    run({ doc }, cfg) {
       for (const el of visible(doc, "a[href], form[action]")) {
         const u = resolveHref(doc, el.attribs?.href ?? el.attribs?.action);
         if (!u || !/^https?:$/.test(u.protocol)) continue;
         const own = sameSite(u, doc.url);
         if ((own && segments(u).some((s) => CART_SEGMENT.test(s))) || u.searchParams.has("add-to-cart")) {
-          return present("A cart or checkout is linked", 0.9, [linkEvidence(doc, el, "Cart or checkout link")]);
+          return present("A cart or checkout is linked", conf(cfg, "confidence_present_1"), [linkEvidence(doc, el, "Cart or checkout link")]);
         }
       }
       const control = visible(doc, "button, input, a, form, [data-action]").find(
         (el) => ADD_TO_CART.test(`${attrWords(el)} ${el.attribs?.name ?? ""} ${el.attribs?.["data-action"] ?? ""}`) || (el.name === "input" && el.attribs?.name === "add-to-cart"),
       );
-      if (control) return present("An add-to-cart control is on the page", 0.9, [{ claim: "Add-to-cart control", value: el2label(doc, control), excerpt: excerptOf(doc.$, control), locator: pathOf(control) }]);
+      if (control) return present("An add-to-cart control is on the page", conf(cfg, "confidence_present_2"), [{ claim: "Add-to-cart control", value: el2label(doc, control), excerpt: excerptOf(doc.$, control), locator: pathOf(control) }]);
       if (doc.vocabularyReliable) {
         const cartText = visible(doc, "a[href], button").find((el) => CART_TEXT.test(textOf(doc.$, el)));
-        if (cartText) return present("A cart or checkout control is on the page", 0.85, [{ claim: "Cart control", value: textOf(doc.$, cartText), excerpt: excerptOf(doc.$, cartText), locator: pathOf(cartText) }]);
+        if (cartText) return present("A cart or checkout control is on the page", conf(cfg, "confidence_present_3"), [{ claim: "Cart control", value: textOf(doc.$, cartText), excerpt: excerptOf(doc.$, cartText), locator: pathOf(cartText) }]);
       }
       const assets = (doc.$("script[src], link[href]").toArray() as Element[]).map((el) => ({ el, url: el.attribs?.src ?? el.attribs?.href ?? "" }));
       const hosted = assets.find((a) => /cdn\.shopify\.com|app\.ecwid\.com/i.test(a.url));
-      if (hosted) return present("The site runs on a hosted store platform", 0.8, [{ claim: "Store platform asset", value: hosted.url, locator: pathOf(hosted.el) }]);
+      if (hosted) return present("The site runs on a hosted store platform", conf(cfg, "confidence_present_4"), [{ claim: "Store platform asset", value: hosted.url, locator: pathOf(hosted.el) }]);
       const woo = assets.find((a) => /\/plugins\/woocommerce\//i.test(a.url)) ?? (/\bwoocommerce\b/.test(doc.$("body").attr("class") ?? "") ? { el: doc.$("body").get(0) as Element, url: "body.woocommerce" } : undefined);
       if (woo) return indeterminate("WooCommerce is installed but no cart or add-to-cart is on the homepage (catalogue mode is common)", [{ claim: "WooCommerce asset", value: woo.url, locator: pathOf(woo.el) }]);
       const shopLink = visible(doc, "a[href]").find((el) => {
@@ -317,7 +333,7 @@ export const capacityChecks: CheckDefinition[] = [
       if (jsonLd(doc).items.some((i) => ldTypes(i).includes("Product") && !!(i as Record<string, unknown>).offers)) {
         return indeterminate("Priced products are described in structured data, but there is no cart or checkout", [{ claim: "Product with offer", value: null, locator: "script[type=application/ld+json]" }]);
       }
-      return absent("No cart, checkout, add-to-cart or store platform on the homepage", 0.75, [{ claim: "No shop marker matched", value: null, locator: "body" }]);
+      return absent("No cart, checkout, add-to-cart or store platform on the homepage", conf(cfg, "confidence_absent"), [{ claim: "No shop marker matched", value: null, locator: "body" }]);
     },
   },
   {
@@ -333,18 +349,24 @@ export const capacityChecks: CheckDefinition[] = [
       min_logos: { default: 4, min: 2, max: 30, integer: true, description: "Images a group needs to count as a wall" },
       max_text_chars_per_logo: { default: 40, min: 10, max: 200, integer: true, description: "A group with more visible text than this per image is content, not a logo wall" },
     },
+    confidences: {
+      confidence_present: { default: 0.8, min: 0.1, max: 1, description: "Confidence of the PRESENT result \"A wall of … client logos\"" },
+      confidence_absent: { default: 0.7, min: 0.1, max: 1, description: "Confidence of the ABSENT result" },
+    },
     run({ doc }, p) {
       const groups = logoGroups(doc, p.min_logos as number, p.max_text_chars_per_logo as number);
       if (groups.length && !doc.vocabularyReliable) return notEnglish(doc.lang);
       const clients = groups.find((g) => g.kind === "client");
-      if (clients) return present(`A wall of ${clients.count} client logos`, 0.8, [groupEvidence(doc, clients, "Client logo wall")]);
+      if (clients) return present(`A wall of ${clients.count} client logos`, conf(p, "confidence_present"), [groupEvidence(doc, clients, "Client logo wall")]);
       const unclear = groups.filter((g) => g.kind === "ambiguous");
       if (unclear.length) return indeterminate("A logo group is present but its label does not say whether these are clients or sponsors", unclear.map((g) => groupEvidence(doc, g, "Logo group, unclear whose")));
       if (!doc.vocabularyReliable) return notEnglish(doc.lang);
       const few = labelledOnly(doc, CLIENT_LABEL);
+      // Clients mentioned (e.g. "Trusted by") but no group of min_logos or more client logos.
+      const detail = few ? `Clients are mentioned ("${textOf(doc.$, few)}") but no group of ${p.min_logos} or more client logos` : "No client logo wall on the homepage";
       return absent(
-        few ? `Clients are mentioned ("${textOf(doc.$, few)}") but no group of ${p.min_logos} or more client logos` : "No client logo wall on the homepage",
-        0.7,
+        detail,
+        conf(p, "confidence_absent"),
         few ? [{ claim: "Client heading or link without a logo wall", value: textOf(doc.$, few), locator: pathOf(few) }] : [{ claim: "No client logo wall matched", value: null, locator: "body" }],
       );
     },
@@ -362,12 +384,17 @@ export const capacityChecks: CheckDefinition[] = [
       min_sponsors: { default: 3, min: 2, max: 30, integer: true, description: "Logos or distinct external links a sponsor section needs" },
       max_text_chars_per_logo: { default: 40, min: 10, max: 200, integer: true, description: "A group with more visible text than this per image is content, not a logo wall" },
     },
+    confidences: {
+      confidence_present_1: { default: 0.8, min: 0.1, max: 1, description: "Confidence of the PRESENT result \"A sponsor section with … logos\"" },
+      confidence_present_2: { default: 0.75, min: 0.1, max: 1, description: "Confidence of the PRESENT result \"A sponsor section links to … sponsors\"" },
+      confidence_absent: { default: 0.7, min: 0.1, max: 1, description: "Confidence of the ABSENT result \"No sponsor or partner section on the homepage\"" },
+    },
     run({ doc }, p) {
       const min = p.min_sponsors as number;
       const groups = logoGroups(doc, min, p.max_text_chars_per_logo as number);
       if (groups.length && !doc.vocabularyReliable) return notEnglish(doc.lang);
       const wall = groups.find((g) => g.kind === "sponsor");
-      if (wall) return present(`A sponsor section with ${wall.count} logos`, 0.8, [groupEvidence(doc, wall, "Sponsor logo wall")]);
+      if (wall) return present(`A sponsor section with ${wall.count} logos`, conf(p, "confidence_present_1"), [groupEvidence(doc, wall, "Sponsor logo wall")]);
       if (!doc.vocabularyReliable) return notEnglish(doc.lang);
       // Sponsors listed as links rather than logos.
       for (const h of visible(doc, HEADINGS).filter((h) => SPONSOR_LABEL.test(textOf(doc.$, h).replace(SPONSOR_SALES, " ")) && !CLIENT_LABEL.test(textOf(doc.$, h)))) {
@@ -378,7 +405,7 @@ export const capacityChecks: CheckDefinition[] = [
             .filter((u): u is URL => !!u && /^https?:$/.test(u.protocol) && !sameSite(u, doc.url))
             .map((u) => u.hostname.replace(/^www\./, "")),
         );
-        if (hosts.size >= min) return present(`A sponsor section links to ${hosts.size} sponsors`, 0.75, [{ claim: "Sponsor section links", value: [...hosts].join(", "), excerpt: textOf(doc.$, h), locator: pathOf(section) }]);
+        if (hosts.size >= min) return present(`A sponsor section links to ${hosts.size} sponsors`, conf(p, "confidence_present_2"), [{ claim: "Sponsor section links", value: [...hosts].join(", "), excerpt: textOf(doc.$, h), locator: pathOf(section) }]);
       }
       const unclear = groups.filter((g) => g.kind === "ambiguous");
       if (unclear.length) return indeterminate("A logo group is present but its label does not say whether these are sponsors or clients", unclear.map((g) => groupEvidence(doc, g, "Logo group, unclear whose")));
@@ -388,7 +415,7 @@ export const capacityChecks: CheckDefinition[] = [
           { claim: "Sponsors heading or link", value: announced.attribs?.href ?? textOf(doc.$, announced), excerpt: textOf(doc.$, announced), locator: pathOf(announced) },
         ]);
       }
-      return absent("No sponsor or partner section on the homepage", 0.7, [{ claim: "No sponsor section matched", value: null, locator: "body" }]);
+      return absent("No sponsor or partner section on the homepage", conf(p, "confidence_absent"), [{ claim: "No sponsor section matched", value: null, locator: "body" }]);
     },
   },
   {
@@ -400,19 +427,24 @@ export const capacityChecks: CheckDefinition[] = [
     description:
       "PRESENT for a statement naming a body the business belongs to or is accredited by ('members of the Legal Practice Council', 'registered with PIRB') or an ISO management-system certification. Product approvals ('SABS-approved hard hats'), statutory registrations (CIPC, SARS) and B-BBEE levels do not count. A heading such as 'Accreditations' with no body named is INDETERMINATE.",
     evidenceRecorded: "The membership statement or certification and where it appears.",
-    run({ doc }) {
+    confidences: {
+      confidence_present_1: { default: 0.85, min: 0.1, max: 1, description: "Confidence of the PRESENT result \"An ISO management-system certification is stated\"" },
+      confidence_present_2: { default: 0.85, min: 0.1, max: 1, description: "Confidence of the PRESENT result \"Membership of or accreditation by … is stated\"" },
+      confidence_absent: { default: 0.7, min: 0.1, max: 1, description: "Confidence of the ABSENT result \"No accreditation or industry body membership stated on the homepage\"" },
+    },
+    run({ doc }, cfg) {
       const iso = doc.text.match(ISO_CERT)?.[0];
-      if (iso) return present("An ISO management-system certification is stated", 0.85, [{ claim: "ISO certification statement", value: iso, locator: "body text" }]);
+      if (iso) return present("An ISO management-system certification is stated", conf(cfg, "confidence_present_1"), [{ claim: "ISO certification statement", value: iso, locator: "body text" }]);
       if (!doc.vocabularyReliable) return notEnglish(doc.lang);
       for (const m of doc.text.matchAll(MEMBERSHIP_STATEMENT)) {
         const body = (m[1] ?? "").replace(/[.,;:]+$/, "").replace(/\s+(of|and|for|the|&)$/i, "");
         if ((BODY_WORD.test(body) || ACRONYM.test(body)) && !NOT_A_BODY.test(body)) {
-          return present(`Membership of or accreditation by ${body} is stated`, 0.85, [{ claim: "Membership or accreditation statement", value: body, excerpt: m[0], locator: "body text" }]);
+          return present(`Membership of or accreditation by ${body} is stated`, conf(cfg, "confidence_present_2"), [{ claim: "Membership or accreditation statement", value: body, excerpt: m[0], locator: "body text" }]);
         }
       }
       const heading = visible(doc, HEADINGS).find((h) => ACCREDITATION_HEADING.test(textOf(doc.$, h)));
       if (heading) return indeterminate("An accreditation or membership section is present but names no body in text", [{ claim: "Accreditation heading", value: textOf(doc.$, heading), locator: pathOf(heading) }]);
-      return absent("No accreditation or industry body membership stated on the homepage", 0.7, [{ claim: "No membership statement matched", value: null, locator: "body" }]);
+      return absent("No accreditation or industry body membership stated on the homepage", conf(cfg, "confidence_absent"), [{ claim: "No membership statement matched", value: null, locator: "body" }]);
     },
   },
 ];

@@ -76,7 +76,7 @@ describe.skipIf(!adminUrl)("M0 schema against real PostgreSQL", () => {
       const tables = await q<{ table_name: string }>(
         `select table_name from information_schema.tables where table_schema = 'public' and table_type = 'BASE TABLE'`,
       );
-      expect(tables).toHaveLength(52);
+      expect(tables).toHaveLength(53);
       const names = tables.map((t) => t.table_name);
       for (const t of ["companies", "evidence", "source_records", "audits", "audit_findings", "signals", "opportunities", "scores", "judgements", "weight_sets", "benchmark_cases"]) {
         expect(names).toContain(t);
@@ -509,17 +509,27 @@ describe.skipIf(!adminUrl)("M0 schema against real PostgreSQL", () => {
   describe("intent gate", () => {
     it("never lets a lead qualify without a passed gate", async () => {
       const l = await lead(await company());
-      await rejects(pool.query(`update leads set lead_state = 'OUTREACH_READY' where id = $1`, [l]), PG.check, "leads_qualified_requires_gate");
+      // OUTREACH_READY: refused for the system, and for anyone without a human YES.
+      await rejects(pool.query(`update leads set lead_state = 'OUTREACH_READY', system_lead_state = 'OUTREACH_READY' where id = $1`, [l]), PG.check);
       await rejects(
         pool.query(
-          `update leads set lead_state = 'COMMERCIAL_OPPORTUNITY', intent_gate_status = 'FAILED', intent_gate_evaluated_at = now() where id = $1`,
+          `update leads set lead_state = 'OUTREACH_READY', state_override = 'OUTREACH_READY', state_override_by = 'K', state_override_reason = 'r', state_override_at = now(),
+             intent_gate_status = 'PASSED', intent_gate_basis = 'human_override', intent_gate_override_by = 'K', intent_gate_override_reason = 'r', intent_gate_evaluated_at = now() where id = $1`,
           [l],
         ),
         PG.check,
-        "leads_qualified_requires_gate",
       );
+      await rejects(
+        pool.query(
+          `update leads set lead_state = 'COMMERCIAL_OPPORTUNITY', system_lead_state = 'COMMERCIAL_OPPORTUNITY', intent_gate_status = 'FAILED', intent_gate_evaluated_at = now() where id = $1`,
+          [l],
+        ),
+        PG.check,
+      );
+      // The effective state is the override when there is one, else the system's.
+      await rejects(pool.query(`update leads set lead_state = 'WATCH_WEAKNESS_ONLY' where id = $1`, [l]), PG.check, "leads_effective_state");
       await pool.query(
-        `update leads set lead_state = 'WATCH_WEAKNESS_ONLY', intent_gate_status = 'FAILED', intent_gate_evaluated_at = now() where id = $1`,
+        `update leads set lead_state = 'WATCH_WEAKNESS_ONLY', system_lead_state = 'WATCH_WEAKNESS_ONLY', intent_gate_status = 'FAILED', system_gate_status = 'FAILED', intent_gate_evaluated_at = now() where id = $1`,
         [l],
       );
     });

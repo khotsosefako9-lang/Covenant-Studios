@@ -9,8 +9,15 @@ import type { PageDoc } from "./document";
  */
 export type CheckStatus = "PASS" | "FAIL" | "PRESENT" | "ABSENT" | "NOT_APPLICABLE" | "INDETERMINATE";
 export type Severity = "info" | "low" | "medium" | "high";
-/** capacity: evidence of operating scale (feeds commercial potential), never a weakness. */
-export type Category = "technical" | "conversion" | "content" | "capacity";
+/**
+ * capacity: evidence of operating scale (feeds commercial potential), never a weakness.
+ * commercial: what an organisation publishes about how it sells and buys (feeds named
+ * signals and disqualifiers), never a weakness.
+ */
+export type Category = "technical" | "conversion" | "content" | "capacity" | "commercial";
+
+/** Categories whose checks record presence (PRESENT/ABSENT) rather than judge a weakness (PASS/FAIL). */
+export const PRESENCE_CATEGORIES: ReadonlySet<Category> = new Set(["capacity", "commercial"]);
 
 /** The result of one extra request made for the audit (http variant, sitemap, link, PDF, profile). */
 export interface Probe {
@@ -74,6 +81,12 @@ export interface CheckDefinition {
   evidenceRecorded: string;
   /** Thresholds, configurable per check (audit_checks.params); defaults live here. */
   params?: ParamSpecs;
+  /**
+   * The check's confidence in each of its outcomes, configurable alongside the thresholds
+   * (Phase 10). Stored in the same audit_checks.params row. INDETERMINATE (0) and
+   * NOT_APPLICABLE (1) are not judgements and stay fixed.
+   */
+  confidences?: ParamSpecs;
   run(ctx: AuditContext, params: Params): CheckResult;
 }
 

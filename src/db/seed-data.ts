@@ -146,6 +146,12 @@ interface SignalTypeSeed {
   detectableFrom?: string;
 }
 
+// What detects a friction type, where something does. Shown in signal_types.detectable_from.
+const FRICTION_DETECTABLE_FROM: Record<string, string> = {
+  sponsorship_inventory:
+    "Audit: an explicit offer to sell sponsorship (commercial.sponsorship_offer). Evidence of commercial inventory, not of existing sponsors",
+};
+
 // Phase 0, "Commercial triggers as signal types" and "Signals extracted from the reasoning".
 // Axis (for friction signals) and decay days are operator-adjustable defaults from the
 // Phase 3 authorization. Friction signals decay with the audit that produced them: 90 days.
@@ -158,6 +164,7 @@ const friction = (group: string, keys: [string, string][]): SignalTypeSeed[] =>
     axis: INTENT_FRICTION.has(key) ? "intent" : "opportunity",
     decayDays: 90,
     group,
+    detectableFrom: FRICTION_DETECTABLE_FROM[key],
   }));
 
 export const signalTypes: SignalTypeSeed[] = [
@@ -243,8 +250,11 @@ export const signalTypeOpportunityTypes: Record<string, string[]> = {
   catalogue_friction: ["rfq_system", "website_rebuild"],
   rfq_friction: ["rfq_system"],
   mobile_commercial_friction: ["website_rebuild"],
-  urgent_service_model: ["conversion_landing_page"],
-  whatsapp_conversion_opportunity: ["conversion_landing_page"],
+  // Phase 10 correction: a trade business losing urgent enquiries across its whole site
+  // needs the site first (Covenant's Proximus Plumbing case: a full business site with
+  // instant routing); a campaign page is the second option, not the answer.
+  urgent_service_model: ["website_rebuild", "conversion_landing_page"],
+  whatsapp_conversion_opportunity: ["website_rebuild", "conversion_landing_page"],
   slow_mobile_experience: ["technical_website_improvement", "website_rebuild"],
   lead_response_friction: ["conversion_landing_page"],
   sponsorship_inventory: ["sports_platform", "sports_matchday_system"],
@@ -287,7 +297,7 @@ export const icpSegments: { key: string; name: string; definition: string; servi
 
 // Phase 0, "Disqualifiers"; evidence rules are defaults from the Phase 3 authorization.
 const HUMAN_ONLY = "Human-supplied evidence only. Never fires automatically.";
-export const disqualifiers: { key: string; name: string; humanOnly: boolean; evidenceRequirement: string }[] = [
+export const disqualifiers: { key: string; name: string; humanOnly: boolean; evidenceRequirement: string; detectionCheckKey?: string }[] = [
   { key: "zero_revenue_speculative", name: "Zero-revenue / speculative", humanOnly: true, evidenceRequirement: HUMAN_ONLY },
   { key: "uncapitalised_micro_operator", name: "Uncapitalised micro-operator", humanOnly: true, evidenceRequirement: HUMAN_ONLY },
   {
@@ -295,6 +305,8 @@ export const disqualifiers: { key: string; name: string; humanOnly: boolean; evi
     name: "Bureaucratic procurement",
     humanOnly: false,
     evidenceRequirement: "May fire on a published tender or supply-chain portal for the organisation.",
+    // Phase 10: the audit check that evidences it.
+    detectionCheckKey: "commercial.procurement_portal",
   },
   { key: "no_decision_maker_access", name: "No decision-maker access", humanOnly: true, evidenceRequirement: HUMAN_ONLY },
   { key: "ethical_misalignment", name: "Ethical misalignment", humanOnly: true, evidenceRequirement: HUMAN_ONLY },
@@ -366,6 +378,15 @@ export const settings: { key: SettingKey; value: unknown; origin: Origin; descri
   { key: "fetch_cache_ttl_hours", value: 24, origin: "default", description: "A page fetched OK within this window is served from the stored record; after it, a conditional request is used." },
   { key: "robots_cache_ttl_hours", value: 24, origin: "default", description: "How long a fetched robots.txt is reused (RFC 9309 caps caching at 24 hours)." },
   { key: "confidence_recency_floor", value: 0.4, origin: "documented", description: "Recency factor at twice the refresh window (Phase 0 'Confidence')." },
+  {
+    key: "intent_gate",
+    value: { min_intent_strength: 0, min_capacity_markers: 2, min_capacity_confidence: 0.7, min_disqualifier_confidence: 0.8 },
+    origin: "default",
+    description:
+      "Intent gate (Phase 10). Route 1: an active Intent signal whose decayed strength exceeds min_intent_strength (0 = any live signal inside its decay window). " +
+      "Route 2: the best current opportunity's entry price is at or above commercial_potential_floor_zar and the latest audit shows at least min_capacity_markers capacity markers PRESENT at min_capacity_confidence. " +
+      "min_disqualifier_confidence: the confidence a check result needs before a code-detectable disqualifier fires on it.",
+  },
   {
     key: "opportunity_derivation",
     value: { secondary_mapping_weight: 0.7, min_relevance: 0.3, max_opportunities: 3 },

@@ -51,6 +51,15 @@ export const settingSchemas = {
   fetch_host_budget_per_run: z.number().int().min(1).max(200),
   fetch_cache_ttl_hours: z.number().min(0),
   robots_cache_ttl_hours: z.number().min(0).max(24),
+  // Intent gate (Phase 10).
+  intent_gate: z
+    .object({
+      min_intent_strength: unit,
+      min_capacity_markers: z.number().int().min(1).max(10),
+      min_capacity_confidence: unit,
+      min_disqualifier_confidence: z.number().min(0.5).max(1),
+    })
+    .strict(),
   // Opportunity derivation (Phase 9).
   opportunity_derivation: z
     .object({

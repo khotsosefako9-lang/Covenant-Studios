@@ -27,7 +27,9 @@
     "prebuild": "npm run -s test:controls",
     "signals": "tsx src/cli/signals.ts",
     "opportunities": "tsx src/cli/opportunities.ts",
-    "thresholds": "tsx src/cli/thresholds.ts"
+    "thresholds": "tsx src/cli/thresholds.ts",
+    "pipeline": "tsx src/cli/pipeline.ts",
+    "leads": "tsx src/cli/leads.ts"
   },
   "dependencies": {
     "cheerio": "^1.2.0",

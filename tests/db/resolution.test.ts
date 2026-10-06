@@ -28,13 +28,28 @@ const IDENTITY_TABLES = new Set([
   "duplicate_resolutions",
 ]);
 
+// An identity change (Phase 10) deliberately changes leads (one business, one open lead)
+// and supersedes opportunities derived on the old identity. Those tables are asserted on
+// their own below; every other table must be untouched.
+const LEAD_TABLES = new Set(["leads", "lead_state_transitions", "opportunities"]);
+
+/** Opportunities as derived: everything but supersession and bookkeeping. */
+async function opportunityRows() {
+  return q(`select id, company_id, opportunity_type_id, covenant_service_id, rank, relevance, claim_type, rationale from opportunities order by id`);
+}
+
+/** Leads as the merge rule sees them: everything but bookkeeping timestamps. */
+async function leadRows() {
+  return q(`select id, company_id, status, lead_state, system_lead_state, closed_reason, merged_into_lead_id, closed_by_merge_id from leads order by id`);
+}
+
 async function snapshotData(): Promise<Record<string, unknown[]>> {
   const tables = await q<{ table_name: string }>(
     `select table_name from information_schema.tables where table_schema = 'public' and table_type = 'BASE TABLE' order by table_name`,
   );
   const out: Record<string, unknown[]> = {};
   for (const { table_name } of tables) {
-    if (IDENTITY_TABLES.has(table_name)) continue;
+    if (IDENTITY_TABLES.has(table_name) || LEAD_TABLES.has(table_name)) continue;
     out[table_name] = (await q<{ r: unknown }>(`select row_to_json(t)::text as r from ${table_name} t order by 1`)).map((x) => x.r);
   }
   return out;
@@ -158,6 +173,8 @@ describe.skipIf(!adminUrl)("identity resolution against real PostgreSQL", () => 
     let before: Record<string, unknown[]>;
     let companiesBefore: unknown[];
     let aliasesBefore: unknown[];
+    let leadsBefore: unknown[];
+    let opportunitiesBefore: unknown[];
     let mergeId: string;
 
     beforeAll(async () => {
@@ -166,6 +183,8 @@ describe.skipIf(!adminUrl)("identity resolution against real PostgreSQL", () => 
       candId = await candidate(winner.id, loser.id, "normalised_name", "acme supplies ~ acme suplies");
       secondCandId = await candidate(winner.id, loser.id, "phone", "+27411234567");
       before = await snapshotData();
+      leadsBefore = await leadRows();
+      opportunitiesBefore = await opportunityRows();
       companiesBefore = await q(`select id, domain, display_name, normalised_name, status, merged_into_id from companies order by id`);
       aliasesBefore = await q(`select * from company_aliases order by id`);
     });
@@ -177,6 +196,18 @@ describe.skipIf(!adminUrl)("identity resolution against real PostgreSQL", () => 
       expect(r).toMatchObject({ winnerId: winner.id, loserId: loser.id });
 
       expect(await snapshotData()).toEqual(before);
+      // One business, one pursuit: both companies had an open lead; the kept company's survives.
+      const open = await q<{ company_id: string }>(`select company_id from leads where status = 'open' and company_id in ($1, $2)`, [winner.id, loser.id]);
+      expect(open).toEqual([{ company_id: winner.id }]);
+      const [closed] = await q<{ closed_reason: string; merged_into_lead_id: string; closed_by_merge_id: string }>(
+        `select closed_reason, merged_into_lead_id, closed_by_merge_id from leads where company_id = $1`,
+        [loser.id],
+      );
+      expect(closed).toMatchObject({ closed_reason: "merged", closed_by_merge_id: mergeId, merged_into_lead_id: r.leadSurvivor });
+      expect((await q(`select 1 from lead_state_transitions where cause = 'merge'`)).length).toBe(2);
+      // Interpretations of the old identities are superseded, not deleted or rewritten.
+      expect(await opportunityRows()).toEqual(opportunitiesBefore);
+      expect(await q(`select 1 from opportunities where superseded_at is null and company_id in ($1, $2)`, [winner.id, loser.id])).toEqual([]);
       const [l] = await q<{ status: string; merged_into_id: string; domain: string }>(
         `select status, merged_into_id, domain from companies where id = $1`,
         [loser.id],
@@ -276,6 +307,9 @@ describe.skipIf(!adminUrl)("identity resolution against real PostgreSQL", () => 
       expect(r).toMatchObject({ restoredCompanyId: loser.id, aliasesRemoved: 3 });
 
       expect(await snapshotData()).toEqual(before);
+      // The lead the merge closed is reopened: leads are as they were, plus the recorded history.
+      expect(await leadRows()).toEqual(leadsBefore);
+      expect((await q(`select 1 from lead_state_transitions where cause = 'unmerge'`)).length).toBe(1);
       const companiesAfter = await q(
         `select id, domain, display_name, normalised_name, status, merged_into_id from companies where id in ($1, $2) order by id`,
         [winner.id, loser.id],

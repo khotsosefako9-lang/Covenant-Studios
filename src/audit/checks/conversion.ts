@@ -3,7 +3,7 @@
 import type { Element } from "domhandler";
 import { EMAIL, FIRST_SCREEN_CHARS, type PageDoc, SA_PHONE, excerptOf, pathOf, resolveHref, textOf, visible } from "../document";
 import type { CheckDefinition, EvidenceItem } from "../types";
-import { fail, indeterminate, notApplicable, notEnglish, pass } from "./result";
+import { fail, indeterminate, notApplicable, notEnglish, pass, conf } from "./result";
 
 const V = "1";
 
@@ -78,6 +78,11 @@ export const conversionChecks: CheckDefinition[] = [
     description: `PASS when an action link/button (quote, book, contact, call, shop, tel:/mailto:/WhatsApp) starts within the first first_screen_chars (default ${FIRST_SCREEN_CHARS}) characters of non-navigation text. Markup order, not rendered layout.`,
     evidenceRecorded: "The first action element found, its text, CSS path and text offset.",
     params: { first_screen_chars: { default: FIRST_SCREEN_CHARS, min: 300, max: 3000, integer: true, description: "Text offset that counts as the first screen" } },
+    confidences: {
+      confidence_pass: { default: 0.75, min: 0.1, max: 1, description: "Confidence of the PASS result \"An action is offered at the top of the page\"" },
+      confidence_fail_1: { default: 0.6, min: 0.1, max: 1, description: "Confidence of the FAIL result \"The first call to action appears … characters into the page, not in the first screen\"" },
+      confidence_fail_2: { default: 0.7, min: 0.1, max: 1, description: "Confidence of the FAIL result \"No call-to-action link or button found on the page\"" },
+    },
     run({ doc }, p) {
       const actions = actionElements(doc).filter((el) => {
         const href = hrefScheme(el);
@@ -90,12 +95,12 @@ export const conversionChecks: CheckDefinition[] = [
         excerpt: excerptOf(doc.$, el),
         locator: `${pathOf(el)} (text offset ${doc.offsets.get(el) ?? "?"})`,
       });
-      if (first && (doc.offsets.get(first) ?? Infinity) < (p.first_screen_chars as number)) return pass("An action is offered at the top of the page", 0.75, [ev(first)]);
+      if (first && (doc.offsets.get(first) ?? Infinity) < (p.first_screen_chars as number)) return pass("An action is offered at the top of the page", conf(p, "confidence_pass"), [ev(first)]);
       if (!doc.vocabularyReliable) return notEnglish(doc.lang);
       if (first) {
-        return fail(`The first call to action appears ${doc.offsets.get(first)} characters into the page, not in the first screen`, 0.6, [ev(first)]);
+        return fail(`The first call to action appears ${doc.offsets.get(first)} characters into the page, not in the first screen`, conf(p, "confidence_fail_1"), [ev(first)]);
       }
-      return fail("No call-to-action link or button found on the page", 0.7, [{ claim: "No action link or button matched", value: null, locator: "body" }]);
+      return fail("No call-to-action link or button found on the page", conf(p, "confidence_fail_2"), [{ claim: "No action link or button matched", value: null, locator: "body" }]);
     },
   },
   {
@@ -106,19 +111,26 @@ export const conversionChecks: CheckDefinition[] = [
     version: V,
     description: "PASS for any of: tel:, mailto: or WhatsApp link, enquiry form (incl. embedded), contact page link, or a phone number or email address in the text.",
     evidenceRecorded: "The first contact path found and its location, or the list of signals sought.",
-    run({ doc }) {
+    confidences: {
+      confidence_pass_1: { default: 0.97, min: 0.1, max: 1, description: "Confidence of the PASS result \"A direct contact link is present\"" },
+      confidence_pass_2: { default: 0.95, min: 0.1, max: 1, description: "Confidence of the PASS result \"An enquiry form is present\"" },
+      confidence_pass_3: { default: 0.9, min: 0.1, max: 1, description: "Confidence of the PASS result \"Contact details appear in the page text\"" },
+      confidence_pass_4: { default: 0.85, min: 0.1, max: 1, description: "Confidence of the PASS result \"A contact page is linked\"" },
+      confidence_fail: { default: 0.85, min: 0.1, max: 1, description: "Confidence of the FAIL result \"No way to contact the business was found on the homepage\"" },
+    },
+    run({ doc }, cfg) {
       const links = visible(doc, "a[href]");
       const direct = links.find((el) => /^(tel:|mailto:)/.test(hrefScheme(el)) || isWhatsApp(doc, el));
-      if (direct) return pass("A direct contact link is present", 0.97, [{ claim: "Contact link", value: hrefScheme(direct), excerpt: excerptOf(doc.$, direct), locator: pathOf(direct) }]);
+      if (direct) return pass("A direct contact link is present", conf(cfg, "confidence_pass_1"), [{ claim: "Contact link", value: hrefScheme(direct), excerpt: excerptOf(doc.$, direct), locator: pathOf(direct) }]);
       const form = enquiryForms(doc)[0] ?? embeddedForms(doc)[0];
-      if (form) return pass("An enquiry form is present", 0.95, [{ claim: "Enquiry form", value: null, excerpt: excerptOf(doc.$, form), locator: pathOf(form) }]);
+      if (form) return pass("An enquiry form is present", conf(cfg, "confidence_pass_2"), [{ claim: "Enquiry form", value: null, excerpt: excerptOf(doc.$, form), locator: pathOf(form) }]);
       const phone = doc.text.match(SA_PHONE)?.[0];
       const email = doc.text.match(EMAIL)?.[0];
-      if (phone || email) return pass("Contact details appear in the page text", 0.9, [{ claim: "Contact details in text", value: phone ?? email ?? null, locator: "body text" }]);
+      if (phone || email) return pass("Contact details appear in the page text", conf(cfg, "confidence_pass_3"), [{ claim: "Contact details in text", value: phone ?? email ?? null, locator: "body text" }]);
       const contactPage = links.find((el) => /contact|kontak|contacto|nous-joindre/i.test(`${el.attribs?.href ?? ""} ${textOf(doc.$, el)}`));
-      if (contactPage) return pass("A contact page is linked", 0.85, [{ claim: "Contact page link", value: contactPage.attribs?.href ?? null, locator: pathOf(contactPage) }]);
+      if (contactPage) return pass("A contact page is linked", conf(cfg, "confidence_pass_4"), [{ claim: "Contact page link", value: contactPage.attribs?.href ?? null, locator: pathOf(contactPage) }]);
       if (!doc.vocabularyReliable) return notEnglish(doc.lang);
-      return fail("No way to contact the business was found on the homepage", 0.85, [
+      return fail("No way to contact the business was found on the homepage", conf(cfg, "confidence_fail"), [
         { claim: "No tel:, mailto:, WhatsApp link, enquiry form, contact page link, phone number or email address", value: null, locator: "body" },
       ]);
     },
@@ -131,16 +143,21 @@ export const conversionChecks: CheckDefinition[] = [
     version: V,
     description: "PASS with a tel: link. FAIL only when a phone number appears as plain text outside any link (a number that is itself a link, e.g. to WhatsApp, is tappable). NOT_APPLICABLE when no phone number is published.",
     evidenceRecorded: "The tel: link, or the plain-text phone number.",
-    run({ doc }) {
+    confidences: {
+      confidence_pass_1: { default: 0.97, min: 0.1, max: 1, description: "Confidence of the PASS result \"Phone number is tappable\"" },
+      confidence_pass_2: { default: 0.85, min: 0.1, max: 1, description: "Confidence of the PASS result \"The phone number shown is a tappable link\"" },
+      confidence_fail: { default: 0.9, min: 0.1, max: 1, description: "Confidence of the FAIL result \"A phone number is shown but cannot be tapped to call\"" },
+    },
+    run({ doc }, cfg) {
       const tel = visible(doc, "a[href]").find((el) => hrefScheme(el).startsWith("tel:"));
-      if (tel) return pass("Phone number is tappable", 0.97, [{ claim: "tel: link", value: hrefScheme(tel), locator: pathOf(tel) }]);
+      if (tel) return pass("Phone number is tappable", conf(cfg, "confidence_pass_1"), [{ claim: "tel: link", value: hrefScheme(tel), locator: pathOf(tel) }]);
       const phone = doc.unlinkedText.match(SA_PHONE)?.[0];
       if (!phone) {
         return doc.text.match(SA_PHONE)
-          ? pass("The phone number shown is a tappable link", 0.85)
+          ? pass("The phone number shown is a tappable link", conf(cfg, "confidence_pass_2"))
           : notApplicable("No phone number is published on the page");
       }
-      return fail("A phone number is shown but cannot be tapped to call", 0.9, [{ claim: "Phone number shown as plain text", value: phone, locator: "body text" }]);
+      return fail("A phone number is shown but cannot be tapped to call", conf(cfg, "confidence_fail"), [{ claim: "Phone number shown as plain text", value: phone, locator: "body text" }]);
     },
   },
   {
@@ -151,10 +168,14 @@ export const conversionChecks: CheckDefinition[] = [
     version: V,
     description: "PASS for a wa.me / api.whatsapp.com / whatsapp: link.",
     evidenceRecorded: "The WhatsApp link, or its absence.",
-    run({ doc }) {
+    confidences: {
+      confidence_pass: { default: 0.97, min: 0.1, max: 1, description: "Confidence of the PASS result \"WhatsApp link present\"" },
+      confidence_fail: { default: 0.9, min: 0.1, max: 1, description: "Confidence of the FAIL result \"No WhatsApp link\"" },
+    },
+    run({ doc }, cfg) {
       const wa = visible(doc, "a[href]").find((el) => isWhatsApp(doc, el));
-      if (wa) return pass("WhatsApp link present", 0.97, [{ claim: "WhatsApp link", value: wa.attribs?.href ?? null, locator: pathOf(wa) }]);
-      return fail("No WhatsApp link", 0.9, [{ claim: "No WhatsApp link on the page", value: null, locator: "body" }]);
+      if (wa) return pass("WhatsApp link present", conf(cfg, "confidence_pass"), [{ claim: "WhatsApp link", value: wa.attribs?.href ?? null, locator: pathOf(wa) }]);
+      return fail("No WhatsApp link", conf(cfg, "confidence_fail"), [{ claim: "No WhatsApp link on the page", value: null, locator: "body" }]);
     },
   },
   {
@@ -165,11 +186,16 @@ export const conversionChecks: CheckDefinition[] = [
     version: V,
     description: "PASS for an on-page enquiry form or a known embedded form provider. INDETERMINATE when only a form-provider script is present.",
     evidenceRecorded: "The form element or embed, and its location.",
-    run({ doc }) {
+    confidences: {
+      confidence_pass_1: { default: 0.95, min: 0.1, max: 1, description: "Confidence of the PASS result \"Enquiry form on the page\"" },
+      confidence_pass_2: { default: 0.85, min: 0.1, max: 1, description: "Confidence of the PASS result \"Embedded enquiry form\"" },
+      confidence_fail: { default: 0.85, min: 0.1, max: 1, description: "Confidence of the FAIL result \"No enquiry form on the homepage\"" },
+    },
+    run({ doc }, cfg) {
       const form = enquiryForms(doc)[0];
-      if (form) return pass("Enquiry form on the page", 0.95, [{ claim: "Enquiry form", value: null, excerpt: excerptOf(doc.$, form), locator: pathOf(form) }]);
+      if (form) return pass("Enquiry form on the page", conf(cfg, "confidence_pass_1"), [{ claim: "Enquiry form", value: null, excerpt: excerptOf(doc.$, form), locator: pathOf(form) }]);
       const embed = embeddedForms(doc)[0];
-      if (embed) return pass("Embedded enquiry form", 0.85, [{ claim: "Embedded form", value: embed.attribs?.src ?? null, locator: pathOf(embed) }]);
+      if (embed) return pass("Embedded enquiry form", conf(cfg, "confidence_pass_2"), [{ claim: "Embedded form", value: embed.attribs?.src ?? null, locator: pathOf(embed) }]);
       const script = doc.$("script[src]").toArray().find((s) => FORM_SCRIPTS.test((s as Element).attribs?.src ?? "")) as Element | undefined;
       if (script) return indeterminate("A form provider script is loaded; the form itself is rendered by JavaScript", [{ claim: "Form provider script", value: script.attribs?.src ?? null, locator: pathOf(script) }]);
       // The homepage was the only page read. A linked contact page may well hold the form.
@@ -177,7 +203,7 @@ export const conversionChecks: CheckDefinition[] = [
       if (contactPage) {
         return indeterminate("No form on the homepage, but a contact page is linked and was not read", [{ claim: "Contact page link", value: contactPage.attribs?.href ?? null, locator: pathOf(contactPage) }]);
       }
-      return fail("No enquiry form on the homepage", 0.85, [{ claim: "No enquiry form", value: null, locator: "body" }]);
+      return fail("No enquiry form on the homepage", conf(cfg, "confidence_fail"), [{ claim: "No enquiry form", value: null, locator: "body" }]);
     },
   },
   {
@@ -189,13 +215,17 @@ export const conversionChecks: CheckDefinition[] = [
     description: "Counts fields marked required (required / aria-required) in the first enquiry form; FAIL above max_required_fields (default 6).",
     evidenceRecorded: "The required-field count and the form's location.",
     params: { max_required_fields: { default: 6, min: 3, max: 20, integer: true, description: "FAIL when the first enquiry form requires more fields than this" } },
+    confidences: {
+      confidence_fail: { default: 0.85, min: 0.1, max: 1, description: "Confidence of the FAIL result \"The enquiry form requires … fields\"" },
+      confidence_pass: { default: 0.8, min: 0.1, max: 1, description: "Confidence of the PASS result \"The enquiry form requires … field(s)\"" },
+    },
     run({ doc }, p) {
       const form = enquiryForms(doc)[0];
       if (!form) return embeddedForms(doc).length ? indeterminate("The form is embedded from another site; its fields cannot be read") : notApplicable("No enquiry form");
       const n = requiredCount(doc, form);
       const ev = [{ claim: "Required fields in the enquiry form", value: String(n), locator: pathOf(form) }];
-      if (n > (p.max_required_fields as number)) return fail(`The enquiry form requires ${n} fields`, 0.85, ev);
-      return pass(`The enquiry form requires ${n} field(s)`, 0.8, ev);
+      if (n > (p.max_required_fields as number)) return fail(`The enquiry form requires ${n} fields`, conf(p, "confidence_fail"), ev);
+      return pass(`The enquiry form requires ${n} field(s)`, conf(p, "confidence_pass"), ev);
     },
   },
   {
@@ -207,13 +237,17 @@ export const conversionChecks: CheckDefinition[] = [
     description: "Text offset of the first enquiry form; FAIL beyond max_offset_chars (default 2,500 characters). Markup order only, so confidence is moderate.",
     evidenceRecorded: "The form's text offset and location.",
     params: { max_offset_chars: { default: 2500, min: 500, max: 20_000, integer: true, description: "FAIL when the first enquiry form starts further than this many characters into the page" } },
+    confidences: {
+      confidence_fail: { default: 0.5, min: 0.1, max: 1, description: "Confidence of the FAIL result \"The enquiry form starts … characters into the page\"" },
+      confidence_pass: { default: 0.5, min: 0.1, max: 1, description: "Confidence of the PASS result \"The enquiry form is near the top of the page\"" },
+    },
     run({ doc }, p) {
       const form = enquiryForms(doc)[0];
       if (!form) return notApplicable("No enquiry form");
       const off = doc.offsets.get(form) ?? 0;
       const ev = [{ claim: "Enquiry form text offset", value: String(off), locator: pathOf(form) }];
-      if (off > (p.max_offset_chars as number)) return fail(`The enquiry form starts ${off} characters into the page`, 0.5, ev);
-      return pass("The enquiry form is near the top of the page", 0.5, ev);
+      if (off > (p.max_offset_chars as number)) return fail(`The enquiry form starts ${off} characters into the page`, conf(p, "confidence_fail"), ev);
+      return pass("The enquiry form is near the top of the page", conf(p, "confidence_pass"), ev);
     },
   },
   {
@@ -224,15 +258,21 @@ export const conversionChecks: CheckDefinition[] = [
     version: V,
     description: "PASS for testimonials, reviews, ratings, client logos/'trusted by', accreditations, or review-provider embeds/structured data.",
     evidenceRecorded: "The first trust signal found.",
-    run({ doc }) {
+    confidences: {
+      confidence_pass_1: { default: 0.9, min: 0.1, max: 1, description: "Confidence of the PASS result \"Review structured data present\"" },
+      confidence_pass_2: { default: 0.85, min: 0.1, max: 1, description: "Confidence of the PASS result \"Review widget present\"" },
+      confidence_pass_3: { default: 0.8, min: 0.1, max: 1, description: "Confidence of the PASS result \"Trust signals appear on the page\"" },
+      confidence_fail: { default: 0.65, min: 0.1, max: 1, description: "Confidence of the FAIL result \"No testimonials, reviews, client logos or accreditations found\"" },
+    },
+    run({ doc }, cfg) {
       const ld = doc.$("script[type='application/ld+json']").text();
-      if (/"(AggregateRating|Review)"/.test(ld)) return pass("Review structured data present", 0.9, [{ claim: "Review structured data", value: null, locator: "script[type=application/ld+json]" }]);
+      if (/"(AggregateRating|Review)"/.test(ld)) return pass("Review structured data present", conf(cfg, "confidence_pass_1"), [{ claim: "Review structured data", value: null, locator: "script[type=application/ld+json]" }]);
       const widget = doc.$("iframe[src], script[src], div[class]").toArray().find((el) => /trustpilot|hellopeter|elfsight|google.*review|reviews\.io|yotpo/i.test(`${(el as Element).attribs?.src ?? ""} ${(el as Element).attribs?.class ?? ""}`)) as Element | undefined;
-      if (widget) return pass("Review widget present", 0.85, [{ claim: "Review widget", value: widget.attribs?.src ?? widget.attribs?.class ?? null, locator: pathOf(widget) }]);
+      if (widget) return pass("Review widget present", conf(cfg, "confidence_pass_2"), [{ claim: "Review widget", value: widget.attribs?.src ?? widget.attribs?.class ?? null, locator: pathOf(widget) }]);
       if (!doc.vocabularyReliable) return notEnglish(doc.lang);
       const m = doc.text.match(/\b(testimonials?|reviews?|what (our )?(clients|customers) say|trusted by|our clients|clients include|case stud(y|ies)|accredit\w*|certified|registered with|members? of|admitted (as|to)|rated \d|5[- ]star|★)/i);
-      if (m) return pass("Trust signals appear on the page", 0.8, [{ claim: "Trust wording", value: m[0], locator: "body text" }]);
-      return fail("No testimonials, reviews, client logos or accreditations found", 0.65, [{ claim: "No trust signal matched", value: null, locator: "body" }]);
+      if (m) return pass("Trust signals appear on the page", conf(cfg, "confidence_pass_3"), [{ claim: "Trust wording", value: m[0], locator: "body text" }]);
+      return fail("No testimonials, reviews, client logos or accreditations found", conf(cfg, "confidence_fail"), [{ claim: "No trust signal matched", value: null, locator: "body" }]);
     },
   },
   {
@@ -243,16 +283,21 @@ export const conversionChecks: CheckDefinition[] = [
     version: V,
     description: "PASS when the page names what the business offers. FAIL only for a thin page (under 150 words, at most one heading); otherwise INDETERMINATE.",
     evidenceRecorded: "The heading or phrase that names the offer.",
-    run({ doc }) {
+    confidences: {
+      confidence_pass_1: { default: 0.8, min: 0.1, max: 1, description: "Confidence of the PASS result \"The page names its services or products\"" },
+      confidence_pass_2: { default: 0.7, min: 0.1, max: 1, description: "Confidence of the PASS result \"The page describes what it offers\"" },
+      confidence_fail: { default: 0.6, min: 0.1, max: 1, description: "Confidence of the FAIL result \"The homepage has … words and does not say what the business offers\"" },
+    },
+    run({ doc }, cfg) {
       if (!doc.vocabularyReliable) return notEnglish(doc.lang);
       const headings = visible(doc, "h1, h2, h3, nav a");
       const hit = headings.find((h) => /\b(services?|what we do|products?|solutions?|our work|specialis|specializ|we offer|we provide)\b/i.test(textOf(doc.$, h)));
-      if (hit) return pass("The page names its services or products", 0.8, [{ claim: "Offer heading or menu item", value: textOf(doc.$, hit), locator: pathOf(hit) }]);
+      if (hit) return pass("The page names its services or products", conf(cfg, "confidence_pass_1"), [{ claim: "Offer heading or menu item", value: textOf(doc.$, hit), locator: pathOf(hit) }]);
       const phrase = doc.text.match(/\b(we (offer|provide|specialise in|specialize in|supply|install|repair|build|design)|our (services|products|range))\b/i)?.[0];
-      if (phrase) return pass("The page describes what it offers", 0.7, [{ claim: "Offer phrase", value: phrase, locator: "body text" }]);
+      if (phrase) return pass("The page describes what it offers", conf(cfg, "confidence_pass_2"), [{ claim: "Offer phrase", value: phrase, locator: "body text" }]);
       const headingCount = visible(doc, "h1, h2, h3").length;
       if (doc.wordCount < 150 && headingCount <= 1) {
-        return fail(`The homepage has ${doc.wordCount} words and does not say what the business offers`, 0.6, [{ claim: "Word and heading count", value: `${doc.wordCount} words, ${headingCount} heading(s)`, locator: "body" }]);
+        return fail(`The homepage has ${doc.wordCount} words and does not say what the business offers`, conf(cfg, "confidence_fail"), [{ claim: "Word and heading count", value: `${doc.wordCount} words, ${headingCount} heading(s)`, locator: "body" }]);
       }
       return indeterminate("No services heading or phrase matched, but the page has enough content that the offer may be described in other words");
     },
@@ -265,13 +310,18 @@ export const conversionChecks: CheckDefinition[] = [
     version: V,
     description: "PASS for rand amounts, ZAR, 'from R…', per-month/hour prices or a pricing/rates/packages section.",
     evidenceRecorded: "The first price or pricing wording found.",
-    run({ doc }) {
+    confidences: {
+      confidence_pass_1: { default: 0.85, min: 0.1, max: 1, description: "Confidence of the PASS result \"Prices are shown\"" },
+      confidence_pass_2: { default: 0.7, min: 0.1, max: 1, description: "Confidence of the PASS result \"Pricing is referred to\"" },
+      confidence_fail: { default: 0.75, min: 0.1, max: 1, description: "Confidence of the FAIL result \"No prices or pricing information on the homepage\"" },
+    },
+    run({ doc }, cfg) {
       const amount = doc.text.match(/\bR\s?\d{1,3}(?:[ ,]\d{3})*(?:[.,]\d{2})?\b|\bZAR\s?\d/)?.[0];
-      if (amount) return pass("Prices are shown", 0.85, [{ claim: "Price on page", value: amount, locator: "body text" }]);
+      if (amount) return pass("Prices are shown", conf(cfg, "confidence_pass_1"), [{ claim: "Price on page", value: amount, locator: "body text" }]);
       if (!doc.vocabularyReliable) return notEnglish(doc.lang);
       const word = doc.text.match(/\b(pricing|price list|our rates|packages|per (month|hour|day)|call-out fee|from R)\b/i)?.[0];
-      if (word) return pass("Pricing is referred to", 0.7, [{ claim: "Pricing wording", value: word, locator: "body text" }]);
-      return fail("No prices or pricing information on the homepage", 0.75, [{ claim: "No price or pricing wording", value: null, locator: "body" }]);
+      if (word) return pass("Pricing is referred to", conf(cfg, "confidence_pass_2"), [{ claim: "Pricing wording", value: word, locator: "body text" }]);
+      return fail("No prices or pricing information on the homepage", conf(cfg, "confidence_fail"), [{ claim: "No price or pricing wording", value: null, locator: "body" }]);
     },
   },
 ];

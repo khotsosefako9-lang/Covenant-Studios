@@ -24,6 +24,8 @@ describe("company-scoped reads go through the identity cluster", () => {
     // Write-path lifecycle: an audit's signals belong to the company record that was
     // audited; retraction must not reach across merged identities to another site's signals.
     "src/signals/detect.ts",
+    // Merge-time lead reconciliation acts on the two company records being merged.
+    "src/leads/merge.ts",
   ]);
 
   it("has no direct eq(<table>.companyId, …) filter outside the allowlist", () => {
@@ -121,7 +123,7 @@ describe("the audit layer is deterministic and claims only what a page shows", (
 
 describe("capacity never becomes a signal or an opportunity", () => {
   it("signal detection and opportunity derivation do not read capacity results", () => {
-    const readers = src.filter((f) => /^src\/(signals|commercial\/derive)/.test(f.path) && /capacity\.|"PRESENT"|"ABSENT"|capacityProfile|CAPACITY_CHECK_KEYS/.test(stripComments(f.text)));
+    const readers = src.filter((f) => /^src\/(signals|commercial\/derive)/.test(f.path) && /capacity\.|capacityProfile|CAPACITY_CHECK_KEYS/.test(stripComments(f.text)));
     expect(readers.map((f) => f.path)).toEqual([]);
   });
 });
@@ -137,6 +139,7 @@ describe("claim types match their writers", () => {
       // never evidence rows.
       "src/commercial/opportunities.ts:INFERRED",
       "src/ingest/companies.ts:REPORTED",
+      "src/leads/actions.ts:REPORTED", // operator-recorded disqualifications: an attributed statement
       "src/signals/detect.ts:REPORTED", // operator-recorded signals: an attributed statement
     ]);
   });

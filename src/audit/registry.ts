@@ -1,26 +1,32 @@
 // The check set, the pure evaluator and the probe planner. No I/O here.
-import { type Params, resolveParams } from "@/core/params";
+import { type ParamSpecs, type Params, resolveParams } from "@/core/params";
 import { capacityChecks } from "./checks/capacity";
+import { commercialChecks } from "./checks/commercial";
 import { conversionChecks } from "./checks/conversion";
 import { contentChecks, pdfLinks, socialLinks } from "./checks/content";
 import { technicalChecks } from "./checks/technical";
 import { type PageDoc, resolveHref, sameSite, visible } from "./document";
-import type { AuditContext, CheckDefinition, CheckResult, Severity } from "./types";
+import { type AuditContext, type CheckDefinition, type CheckResult, PRESENCE_CATEGORIES, type Severity } from "./types";
 
 /** Bump when any check's logic changes, so findings from different sets are not compared blindly. */
-export const CHECK_SET_VERSION = "m0.2";
+export const CHECK_SET_VERSION = "m0.3";
 
-export const ALL_CHECKS: readonly CheckDefinition[] = [...technicalChecks, ...conversionChecks, ...contentChecks, ...capacityChecks];
+export const ALL_CHECKS: readonly CheckDefinition[] = [...technicalChecks, ...conversionChecks, ...contentChecks, ...capacityChecks, ...commercialChecks];
 
 /** Statuses each kind of check may return; anything else is reported as ERROR. */
-const ALLOWED_STATUS: Record<"capacity" | "weakness", ReadonlySet<string>> = {
-  capacity: new Set(["PRESENT", "ABSENT", "NOT_APPLICABLE", "INDETERMINATE"]),
+const ALLOWED_STATUS: Record<"presence" | "weakness", ReadonlySet<string>> = {
+  presence: new Set(["PRESENT", "ABSENT", "NOT_APPLICABLE", "INDETERMINATE"]),
   weakness: new Set(["PASS", "FAIL", "NOT_APPLICABLE", "INDETERMINATE"]),
 };
 
+/** Every configurable number of a check: its thresholds and its confidence in each outcome. */
+export function paramSpecsOf(check: CheckDefinition): ParamSpecs {
+  return { ...check.params, ...check.confidences };
+}
+
 /** Resolved parameters for every check: stored values (audit_checks.params) over code defaults. Throws on an invalid row. */
 export function resolveCheckParams(stored: Readonly<Record<string, unknown>> = {}): Record<string, Params> {
-  return Object.fromEntries(ALL_CHECKS.map((c) => [c.key, resolveParams(c.params, stored[c.key], `audit check ${c.key}`)]));
+  return Object.fromEntries(ALL_CHECKS.map((c) => [c.key, resolveParams(paramSpecsOf(c), stored[c.key], `audit check ${c.key}`)]));
 }
 
 export interface EvaluatedCheck {
@@ -40,8 +46,8 @@ const RANK: Record<Severity, number> = { info: 0, low: 1, medium: 2, high: 3 };
 export function evaluate(ctx: AuditContext, enabled: ReadonlySet<string> | null = null, params: Readonly<Record<string, Params>> = {}): EvaluatedCheck[] {
   return ALL_CHECKS.filter((c) => !enabled || enabled.has(c.key)).map((check) => {
     try {
-      const result = check.run(ctx, params[check.key] ?? resolveParams(check.params, undefined, check.key));
-      const kind = check.category === "capacity" ? "capacity" : "weakness";
+      const result = check.run(ctx, params[check.key] ?? resolveParams(paramSpecsOf(check), undefined, check.key));
+      const kind = PRESENCE_CATEGORIES.has(check.category) ? "presence" : "weakness";
       if (!ALLOWED_STATUS[kind].has(result.status)) throw new Error(`a ${kind} check may not return ${result.status}`);
       const override = result.severity && RANK[result.severity] <= RANK[check.severity] ? result.severity : check.severity;
       return { check, result, severity: result.status === "FAIL" ? override : null };

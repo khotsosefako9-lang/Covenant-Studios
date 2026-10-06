@@ -83,6 +83,7 @@ export async function getCompanyOpportunities(db: Db, companyId: string, opts: {
       typeName: s.opportunityTypes.name,
       serviceKey: s.covenantServices.key,
       serviceName: s.covenantServices.name,
+      serviceUnit: s.covenantServices.unit,
       priceLowZar: s.covenantServices.priceLowZar,
       priceHighZar: s.covenantServices.priceHighZar,
     })

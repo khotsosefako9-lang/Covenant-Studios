@@ -4,7 +4,7 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { and, eq, inArray, isNull, ne, notInArray, or, sql } from "drizzle-orm";
 import * as s from "./schema/index";
-import { ALL_CHECKS } from "../audit/registry";
+import { ALL_CHECKS, paramSpecsOf } from "../audit/registry";
 import { defaultsOf } from "../core/params";
 import { DETECTORS } from "../signals/detectors";
 import * as data from "./seed-data";
@@ -185,6 +185,11 @@ export async function seed(db: Db): Promise<void> {
         .where(
           and(eq(s.disqualifiers.key, d.key), isNull(s.disqualifiers.evidenceRequirement), ne(s.disqualifiers.configOrigin, "operator")),
         );
+      // Which check lets a disqualifier fire from code follows the code, unless an operator edited the row.
+      await tx
+        .update(s.disqualifiers)
+        .set({ detectionCheckKey: d.humanOnly ? null : (d.detectionCheckKey ?? null) })
+        .where(and(eq(s.disqualifiers.key, d.key), ne(s.disqualifiers.configOrigin, "operator")));
     }
 
     const ws = data.defaultWeightSet;
@@ -236,7 +241,7 @@ export async function seed(db: Db): Promise<void> {
         .onConflictDoUpdate({ target: s.auditChecks.key, set: { ...doc, updatedAt: sql`now()` } });
       // Thresholds: code defaults fill keys that are missing; a stored value is never
       // overwritten, and an operator's row is never touched.
-      const defaults = defaultsOf(c.params);
+      const defaults = defaultsOf(paramSpecsOf(c));
       if (!Object.keys(defaults).length) continue;
       const [row] = await tx.select({ params: s.auditChecks.params, origin: s.auditChecks.configOrigin }).from(s.auditChecks).where(eq(s.auditChecks.key, c.key));
       if (row?.origin === "operator") continue;

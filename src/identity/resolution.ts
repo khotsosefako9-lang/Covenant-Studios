@@ -5,6 +5,7 @@ import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { normaliseCompanyName } from "@/core/identity/name";
 import * as s from "@/db/schema/index";
+import { reconcileLeadsOnMerge, reopenLeadsOnUnmerge } from "@/leads/merge";
 
 type Db = NodePgDatabase<typeof s>;
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
@@ -44,7 +45,9 @@ async function openCandidatesForPair(tx: Tx, a: string, b: string) {
     .for("update");
 }
 
-export type ConfirmResult = { ok: true; mergeId: string; winnerId: string; loserId: string; aliasesAdded: number } | Failure;
+export type ConfirmResult =
+  | { ok: true; mergeId: string; winnerId: string; loserId: string; aliasesAdded: number; leadClosed: string | null; leadSurvivor: string | null }
+  | Failure;
 
 /** Confirms a candidate and merges the other company into `keepCompanyId`. */
 export async function confirmDuplicate(
@@ -108,6 +111,8 @@ export async function confirmDuplicate(
 
     const open = await openCandidatesForPair(tx, cand.companyAId, cand.companyBId);
     const now = new Date();
+    // One business, one pursuit (src/leads/merge.ts).
+    const leads = await reconcileLeadsOnMerge(tx, { mergeId: merge.id, winnerId, loserId, actor: args.actor.trim(), at: now });
     for (const c of open) {
       await tx
         .update(s.companyDuplicateCandidates)
@@ -122,7 +127,7 @@ export async function confirmDuplicate(
         mergeId: merge.id,
       });
     }
-    return { ok: true as const, mergeId: merge.id, winnerId, loserId, aliasesAdded: added.length };
+    return { ok: true as const, mergeId: merge.id, winnerId, loserId, aliasesAdded: added.length, leadClosed: leads.closedId, leadSurvivor: leads.survivorId };
   });
 }
 
@@ -200,7 +205,7 @@ export async function deferDuplicate(
   });
 }
 
-export type UnmergeResult = { ok: true; restoredCompanyId: string; aliasesRemoved: number } | Failure;
+export type UnmergeResult = { ok: true; restoredCompanyId: string; aliasesRemoved: number; leadsReopened: string[] } | Failure;
 
 /**
  * Reverses a merge: the loser becomes active again, the aliases the merge added are
@@ -233,6 +238,7 @@ export async function unmerge(db: Db, args: { mergeId: string; actor: string; re
       .update(s.companyMerges)
       .set({ unmergedBy: args.actor.trim(), unmergeReason: args.reason.trim(), unmergedAt: now })
       .where(eq(s.companyMerges.id, merge.id));
+    const leadsReopened = await reopenLeadsOnUnmerge(tx, { mergeId: merge.id, winnerId: merge.winnerId, loserId: loser.id, actor: args.actor.trim(), at: now });
 
     const confirmed = await tx
       .selectDistinct({ candidateId: s.duplicateResolutions.candidateId })
@@ -252,7 +258,7 @@ export async function unmerge(db: Db, args: { mergeId: string; actor: string; re
         mergeId: merge.id,
       });
     }
-    return { ok: true as const, restoredCompanyId: loser.id, aliasesRemoved: removed.length };
+    return { ok: true as const, restoredCompanyId: loser.id, aliasesRemoved: removed.length, leadsReopened };
   });
 }
 

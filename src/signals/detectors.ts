@@ -50,6 +50,13 @@ const common = (minConfidence = MIN_FINDING_CONFIDENCE) => ({
 const failed = (s: AuditSnapshot, key: string, minConfidence: number) =>
   s.findings.find((f) => f.checkKey === key && f.status === "FAIL" && f.confidence >= minConfidence && f.evidenceIds.length > 0);
 
+/**
+ * A PRESENT result of a commercial-offer check (commercial.*). Capacity checks are never
+ * read here: capacity feeds commercial potential, not signals.
+ */
+const offered = (s: AuditSnapshot, key: `commercial.${string}`, minConfidence: number) =>
+  s.findings.find((f) => f.checkKey === key && f.status === "PRESENT" && f.confidence >= minConfidence && f.evidenceIds.length > 0);
+
 const round = (n: number) => Math.round(n * 1000) / 1000;
 
 function candidate(typeKey: string, strength: number, findings: FindingFact[], rationale: string, p: Params): Candidate | null {
@@ -156,6 +163,15 @@ export const DETECTORS: Detector[] = [
       return f ? candidate("no_qualification_path", n(p, "strength"), [f], "no enquiry form or contact page", p) : null;
     },
   },
+  {
+    typeKey: "sponsorship_inventory",
+    rule: "commercial.sponsorship_offer PRESENT (confidence ≥ min_finding_confidence, default 0.8): an explicit offer to sell sponsorship (packages, 'become a sponsor'). Prose-only offers (confidence 0.7) do not qualify by default. Evidence of commercial inventory to sell (the sports ICP criterion), not of existing sponsors.",
+    params: { ...common(0.8), strength: unit(0.7, "Signal strength") },
+    detect(s, p) {
+      const f = offered(s, "commercial.sponsorship_offer", n(p, "min_finding_confidence"));
+      return f ? candidate("sponsorship_inventory", n(p, "strength"), [f], "sponsorship offered for sale", p) : null;
+    },
+  },
 ];
 
 /**
@@ -171,7 +187,6 @@ export const NOT_AUTOMATED: Record<string, string> = {
   rfq_friction: "No deterministic check isolates the quotation path from general enquiry friction (that is lead_response_friction).",
   urgent_service_model: "Needs reading service descriptions (\"24-hour\", \"emergency\"); not a finding.",
   whatsapp_conversion_opportunity: "Friction only for some segments (urgent trade); absence alone fires on most well-built sites.",
-  sponsorship_inventory: "Needs reading sponsor and partner sections; not a finding.",
   matchday_content_friction: "Needs social posting history.",
   audience_scale: "Needs audience figures, which are not observable from a page and must not be estimated.",
   attendance_opportunity: "Needs fixture, ticketing and attendance context; not a finding.",
@@ -185,8 +200,9 @@ export function resolveDetectorParams(stored: Readonly<Record<string, unknown>> 
 }
 
 /**
- * Runs every detector. Only FAIL findings are read: capacity results (PRESENT/ABSENT) are
- * evidence of scale for commercial potential and never become signals.
+ * Runs every detector. Detectors read FAIL findings and the PRESENT results of
+ * commercial-offer checks; capacity results are evidence of scale for commercial potential
+ * and never become signals.
  */
 export function detectAll(s: AuditSnapshot, params: Readonly<Record<string, Params>> = {}): Candidate[] {
   return DETECTORS.map((d) => d.detect(s, params[d.typeKey] ?? resolveParams(d.params, undefined, d.typeKey))).filter((c): c is Candidate => c !== null);

@@ -5,7 +5,7 @@
 // touches it again. Values are validated against the bounds the code declares.
 import "./stdout";
 import { eq } from "drizzle-orm";
-import { ALL_CHECKS, resolveCheckParams } from "../audit/registry";
+import { ALL_CHECKS, paramSpecsOf, resolveCheckParams } from "../audit/registry";
 import { resolveParams } from "../core/params";
 import { getDb, getPool } from "../db/client";
 import * as s from "../db/schema/index";
@@ -18,10 +18,10 @@ try {
   if (command === "list") {
     const checks = await db.select({ key: s.auditChecks.key, params: s.auditChecks.params, origin: s.auditChecks.configOrigin }).from(s.auditChecks);
     const resolvedChecks = resolveCheckParams(Object.fromEntries(checks.map((c) => [c.key, c.params])));
-    console.log("Audit check thresholds (audit_checks.params):");
-    for (const c of ALL_CHECKS.filter((x) => x.params)) {
+    console.log("Audit check thresholds and confidences (audit_checks.params):");
+    for (const c of ALL_CHECKS) {
       const origin = checks.find((r) => r.key === c.key)?.origin;
-      for (const [k, spec] of Object.entries(c.params ?? {})) console.log(`  ${c.key}.${k} = ${resolvedChecks[c.key]?.[k]} [${origin}] (default ${spec.default}, ${spec.min}–${spec.max}): ${spec.description}`);
+      for (const [k, spec] of Object.entries(paramSpecsOf(c))) console.log(`  ${c.key}.${k} = ${resolvedChecks[c.key]?.[k]} [${origin}] (default ${spec.default}, ${spec.min}–${spec.max}): ${spec.description}`);
     }
     const types = await db.select({ key: s.signalTypes.key, params: s.signalTypes.detectorParams, origin: s.signalTypes.configOrigin }).from(s.signalTypes);
     const resolvedDetectors = resolveDetectorParams(Object.fromEntries(types.map((t) => [t.key, t.params])));
@@ -34,10 +34,10 @@ try {
     const value = Number(raw);
     if (kind === "check") {
       const def = ALL_CHECKS.find((c) => c.key === key);
-      if (!def?.params) throw new Error(`Check ${key} has no configurable parameters`);
+      if (!def) throw new Error(`No check ${key}`);
       const [row] = await db.select({ params: s.auditChecks.params }).from(s.auditChecks).where(eq(s.auditChecks.key, key));
       const next = { ...((row?.params ?? {}) as Record<string, unknown>), [param]: value };
-      resolveParams(def.params, next, `audit check ${key}`); // throws on an unknown key or an out-of-bounds value
+      resolveParams(paramSpecsOf(def), next, `audit check ${key}`); // throws on an unknown key or an out-of-bounds value
       await db.update(s.auditChecks).set({ params: next, configOrigin: "operator" }).where(eq(s.auditChecks.key, key));
     } else {
       const def = DETECTORS.find((d) => d.typeKey === key);

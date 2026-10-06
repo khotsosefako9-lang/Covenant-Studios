@@ -1,4 +1,5 @@
 // Small constructors so every check states its result the same way.
+import type { Params } from "@/core/params";
 import type { CheckResult, EvidenceItem, Severity } from "../types";
 
 export const pass = (detail: string, confidence: number, evidence: EvidenceItem[] = []): CheckResult => ({
@@ -46,3 +47,10 @@ export const notEnglish = (lang: string | null) =>
   indeterminate(
     `Page language ${lang ? `"${lang}"` : "(undeclared)"} is not one this check's vocabulary can read; no judgement made`,
   );
+
+/** A check's configured confidence for one of its outcomes (audit_checks.params). */
+export function conf(cfg: Params, key: string): number {
+  const v = cfg[key];
+  if (v === undefined) throw new Error(`No configured confidence ${key}`);
+  return v;
+}

@@ -15,7 +15,6 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
-import { auditChecks } from "./audit";
 import { id, timestamps } from "./common";
 import { billingPeriod, configOrigin, opportunityTypeOrigin, revenueModel, scoreAxis, serviceUnit, signalKind } from "./enums";
 
@@ -87,23 +86,6 @@ export const opportunityTypeServices = pgTable(
     primaryKey({ columns: [t.opportunityTypeId, t.covenantServiceId] }),
     check("opportunity_type_services_preference", sql`${t.preference} >= 1`),
   ],
-);
-
-// finding → opportunity_type. Keyed by audit check key; the check set lands in Phase 6.
-export const findingOpportunityMappings = pgTable(
-  "finding_opportunity_mappings",
-  {
-    id: id(),
-    checkKey: text("check_key")
-      .notNull()
-      .references((): AnyPgColumn => auditChecks.key, { onDelete: "cascade", onUpdate: "cascade" }),
-    opportunityTypeId: uuid("opportunity_type_id")
-      .notNull()
-      .references(() => opportunityTypes.id, { onDelete: "cascade" }),
-    active: boolean("active").notNull().default(true),
-    ...timestamps(),
-  },
-  (t) => [uniqueIndex("finding_opportunity_mappings_unique").on(t.checkKey, t.opportunityTypeId)],
 );
 
 // The five documented triggers plus the friction signals from the benchmark reasoning.
@@ -192,11 +174,14 @@ export const disqualifiers = pgTable("disqualifiers", {
   // Human-only rules can never fire automatically: they need operator-supplied evidence
   // (enforced by trigger on lead_disqualifications).
   humanOnly: boolean("human_only").notNull(),
-  // Covers evidence_requirement and human_only.
+  // The audit check whose PRESENT result lets this disqualifier fire from code (Phase 10),
+  // e.g. bureaucratic_procurement ← commercial.procurement_portal. Never set on a human-only rule.
+  detectionCheckKey: text("detection_check_key"),
+  // Covers evidence_requirement, human_only and detection_check_key.
   configOrigin: configOrigin("config_origin").notNull().default("documented"),
   active: boolean("active").notNull().default(true),
   ...timestamps(),
-});
+}, (t) => [check("disqualifiers_human_only_not_detected", sql`not ${t.humanOnly} or ${t.detectionCheckKey} is null`)]);
 
 const weight = (name: string) => numeric(name, { precision: 5, scale: 4 }).notNull();
 

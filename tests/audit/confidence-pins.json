@@ -1,0 +1,183 @@
+{
+  "tech.https": {
+    "confidence_pass": 0.99,
+    "confidence_fail": 0.9
+  },
+  "tech.certificate_valid": {
+    "confidence_pass": 0.97,
+    "confidence_fail": 0.95
+  },
+  "tech.http_redirects_to_https": {
+    "confidence_pass": 0.97,
+    "confidence_fail": 0.9
+  },
+  "tech.viewport_meta": {
+    "confidence_fail_1": 0.95,
+    "confidence_pass": 0.95,
+    "confidence_fail_2": 0.85
+  },
+  "tech.html_weight": {
+    "confidence_fail": 0.95,
+    "confidence_pass": 0.95
+  },
+  "tech.response_time": {
+    "confidence_fail": 0.5,
+    "confidence_pass": 0.6
+  },
+  "tech.title": {
+    "confidence_fail_1": 0.97,
+    "confidence_fail_2": 0.9,
+    "confidence_pass": 0.97
+  },
+  "tech.meta_description": {
+    "confidence_fail": 0.95,
+    "confidence_pass": 0.95
+  },
+  "tech.canonical": {
+    "confidence_fail_1": 0.9,
+    "confidence_fail_2": 0.85,
+    "confidence_pass": 0.9
+  },
+  "tech.indexable": {
+    "confidence_fail_1": 0.97,
+    "confidence_fail_2": 0.97,
+    "confidence_pass": 0.95
+  },
+  "tech.sitemap": {
+    "confidence_pass": 0.95,
+    "confidence_fail": 0.6
+  },
+  "tech.headings": {
+    "confidence_fail_1": 0.9,
+    "confidence_fail_2": 0.8,
+    "confidence_fail_3": 0.7,
+    "confidence_pass": 0.9
+  },
+  "tech.broken_internal_links": {
+    "confidence_fail": 0.9,
+    "confidence_pass": 0.85
+  },
+  "conv.primary_cta_first_screen": {
+    "confidence_pass": 0.75,
+    "confidence_fail_1": 0.6,
+    "confidence_fail_2": 0.7
+  },
+  "conv.contact_path": {
+    "confidence_pass_1": 0.97,
+    "confidence_pass_2": 0.95,
+    "confidence_pass_3": 0.9,
+    "confidence_pass_4": 0.85,
+    "confidence_fail": 0.85
+  },
+  "conv.click_to_call": {
+    "confidence_pass_1": 0.97,
+    "confidence_pass_2": 0.85,
+    "confidence_fail": 0.9
+  },
+  "conv.whatsapp_link": {
+    "confidence_pass": 0.97,
+    "confidence_fail": 0.9
+  },
+  "conv.enquiry_form": {
+    "confidence_pass_1": 0.95,
+    "confidence_pass_2": 0.85,
+    "confidence_fail": 0.85
+  },
+  "conv.form_required_fields": {
+    "confidence_fail": 0.85,
+    "confidence_pass": 0.8
+  },
+  "conv.form_position": {
+    "confidence_fail": 0.5,
+    "confidence_pass": 0.5
+  },
+  "conv.trust_signals": {
+    "confidence_pass_1": 0.9,
+    "confidence_pass_2": 0.85,
+    "confidence_pass_3": 0.8,
+    "confidence_fail": 0.65
+  },
+  "conv.services_named": {
+    "confidence_pass_1": 0.8,
+    "confidence_pass_2": 0.7,
+    "confidence_fail": 0.6
+  },
+  "conv.pricing_info": {
+    "confidence_pass_1": 0.85,
+    "confidence_pass_2": 0.7,
+    "confidence_fail": 0.75
+  },
+  "content.business_identity": {
+    "confidence_fail": 0.85,
+    "confidence_pass": 0.9
+  },
+  "content.location_stated": {
+    "confidence_pass_1": 0.9,
+    "confidence_pass_2": 0.85,
+    "confidence_pass_3": 0.85,
+    "confidence_pass_4": 0.8,
+    "confidence_pass_5": 0.7,
+    "confidence_fail": 0.65
+  },
+  "content.copyright_year": {
+    "confidence_fail": 0.5,
+    "confidence_pass": 0.6
+  },
+  "content.latest_dated_content": {
+    "confidence_fail": 0.7,
+    "confidence_pass": 0.75
+  },
+  "content.heavy_catalogue": {
+    "confidence_fail": 0.9,
+    "confidence_pass": 0.85
+  },
+  "content.social_links": {
+    "confidence_fail": 0.85,
+    "confidence_pass": 0.95
+  },
+  "content.social_links_resolve": {
+    "confidence_fail": 0.85,
+    "confidence_pass": 0.8
+  },
+  "capacity.careers_page": {
+    "confidence_present_1": 0.9,
+    "confidence_present_2": 0.9,
+    "confidence_absent": 0.75
+  },
+  "capacity.multiple_locations": {
+    "confidence_present": 0.85,
+    "confidence_absent": 0.6
+  },
+  "capacity.online_shop": {
+    "confidence_present_1": 0.9,
+    "confidence_present_2": 0.9,
+    "confidence_present_3": 0.85,
+    "confidence_present_4": 0.8,
+    "confidence_absent": 0.75
+  },
+  "capacity.client_logo_wall": {
+    "confidence_present": 0.8,
+    "confidence_absent": 0.7
+  },
+  "capacity.sponsor_section": {
+    "confidence_present_1": 0.8,
+    "confidence_present_2": 0.75,
+    "confidence_absent": 0.7
+  },
+  "capacity.accreditation": {
+    "confidence_present_1": 0.85,
+    "confidence_present_2": 0.85,
+    "confidence_absent": 0.7
+  },
+  "commercial.sponsorship_offer": {
+    "confidence_present_1": 0.9,
+    "confidence_present_2": 0.9,
+    "confidence_present_3": 0.7,
+    "confidence_absent": 0.75
+  },
+  "commercial.procurement_portal": {
+    "confidence_present_1": 0.85,
+    "confidence_present_2": 0.7,
+    "confidence_absent": 0.75
+  }
+}

@@ -4,7 +4,7 @@ import type { Element } from "domhandler";
 import { normaliseCompanyName } from "@/core/identity/name";
 import { pathOf, resolveHref, textOf, visible } from "../document";
 import type { CheckDefinition, EvidenceItem, Probe } from "../types";
-import { fail, indeterminate, notApplicable, notEnglish, pass } from "./result";
+import { fail, indeterminate, notApplicable, notEnglish, pass, conf } from "./result";
 
 const V = "1";
 
@@ -78,7 +78,11 @@ export const contentChecks: CheckDefinition[] = [
     version: V,
     description: "PASS when the company's name appears in the title, h1, og:site_name, logo alt text or copyright line. FAIL only when none of those elements exist.",
     evidenceRecorded: "The element in which the name was found, or the identifying elements present.",
-    run({ doc, companyName }) {
+    confidences: {
+      confidence_fail: { default: 0.85, min: 0.1, max: 1, description: "Confidence of the FAIL result \"Nothing on the page states who the business is (no title, h1, site name, logo text or copyright line)\"" },
+      confidence_pass: { default: 0.9, min: 0.1, max: 1, description: "Confidence of the PASS result \"The business name is stated\"" },
+    },
+    run({ doc, companyName }, cfg) {
       const $ = doc.$;
       const candidates: { value: string; locator: string }[] = [];
       const push = (value: string | undefined, locator: string) => {
@@ -91,12 +95,12 @@ export const contentChecks: CheckDefinition[] = [
       const copyright = doc.text.match(/(©|copyright)[^.|\n]{0,80}/i)?.[0];
       push(copyright, "body text (copyright line)");
       if (!candidates.length) {
-        return fail("Nothing on the page states who the business is (no title, h1, site name, logo text or copyright line)", 0.85, [{ claim: "No identifying element", value: null, locator: "document" }]);
+        return fail("Nothing on the page states who the business is (no title, h1, site name, logo text or copyright line)", conf(cfg, "confidence_fail"), [{ claim: "No identifying element", value: null, locator: "document" }]);
       }
       if (companyName) {
         const want = normaliseCompanyName(companyName);
         const hit = want && candidates.find((c) => normaliseCompanyName(c.value).includes(want));
-        if (hit) return pass("The business name is stated", 0.9, [{ claim: "Business name on page", value: hit.value, locator: hit.locator }]);
+        if (hit) return pass("The business name is stated", conf(cfg, "confidence_pass"), [{ claim: "Business name on page", value: hit.value, locator: hit.locator }]);
       }
       return indeterminate("Identifying elements exist but the recorded company name was not matched (the trading name may differ)", candidates.slice(0, 3).map((c) => ({ claim: "Identifying element", value: c.value, locator: c.locator })));
     },
@@ -109,19 +113,27 @@ export const contentChecks: CheckDefinition[] = [
     version: V,
     description: "PASS for an address, a South African place name, a service-area statement, postal-address structured data or a maps link.",
     evidenceRecorded: "The place, address or map link found.",
-    run({ doc }) {
+    confidences: {
+      confidence_pass_1: { default: 0.9, min: 0.1, max: 1, description: "Confidence of the PASS result \"Address in structured data\"" },
+      confidence_pass_2: { default: 0.85, min: 0.1, max: 1, description: "Confidence of the PASS result \"A map link or embed is present\"" },
+      confidence_pass_3: { default: 0.85, min: 0.1, max: 1, description: "Confidence of the PASS result \"An address element is present\"" },
+      confidence_pass_4: { default: 0.8, min: 0.1, max: 1, description: "Confidence of the PASS result \"A location is stated\"" },
+      confidence_pass_5: { default: 0.7, min: 0.1, max: 1, description: "Confidence of the PASS result \"A service area is described\"" },
+      confidence_fail: { default: 0.65, min: 0.1, max: 1, description: "Confidence of the FAIL result \"No address, place name or service area found\"" },
+    },
+    run({ doc }, cfg) {
       const ld = doc.$("script[type='application/ld+json']").text();
-      if (/"(PostalAddress|address|areaServed)"/.test(ld)) return pass("Address in structured data", 0.9, [{ claim: "Address structured data", value: null, locator: "script[type=application/ld+json]" }]);
+      if (/"(PostalAddress|address|areaServed)"/.test(ld)) return pass("Address in structured data", conf(cfg, "confidence_pass_1"), [{ claim: "Address structured data", value: null, locator: "script[type=application/ld+json]" }]);
       const map = visible(doc, "a[href], iframe[src]").find((el) => /(google\.[a-z.]+\/maps|maps\.google|goo\.gl\/maps|maps\.app\.goo\.gl|openstreetmap\.org)/i.test(el.attribs?.href ?? el.attribs?.src ?? ""));
-      if (map) return pass("A map link or embed is present", 0.85, [{ claim: "Map link", value: map.attribs?.href ?? map.attribs?.src ?? null, locator: pathOf(map) }]);
+      if (map) return pass("A map link or embed is present", conf(cfg, "confidence_pass_2"), [{ claim: "Map link", value: map.attribs?.href ?? map.attribs?.src ?? null, locator: pathOf(map) }]);
       const address = visible(doc, "address")[0];
-      if (address) return pass("An address element is present", 0.85, [{ claim: "Address", value: textOf(doc.$, address), locator: pathOf(address) }]);
+      if (address) return pass("An address element is present", conf(cfg, "confidence_pass_3"), [{ claim: "Address", value: textOf(doc.$, address), locator: pathOf(address) }]);
       const place = doc.text.match(SA_PLACES)?.[0] ?? doc.text.match(STREET)?.[0] ?? doc.text.match(/\bP\.?\s?O\.?\s?Box\s+\d+/i)?.[0];
-      if (place) return pass("A location is stated", 0.8, [{ claim: "Location in text", value: place, locator: "body text" }]);
+      if (place) return pass("A location is stated", conf(cfg, "confidence_pass_4"), [{ claim: "Location in text", value: place, locator: "body text" }]);
       if (!doc.vocabularyReliable) return notEnglish(doc.lang);
       const area = doc.text.match(/\b(service areas?|areas we (serve|cover)|we (serve|cover|operate in))\b/i)?.[0];
-      if (area) return pass("A service area is described", 0.7, [{ claim: "Service area wording", value: area, locator: "body text" }]);
-      return fail("No address, place name or service area found", 0.65, [{ claim: "No location matched", value: null, locator: "body" }]);
+      if (area) return pass("A service area is described", conf(cfg, "confidence_pass_5"), [{ claim: "Service area wording", value: area, locator: "body text" }]);
+      return fail("No address, place name or service area found", conf(cfg, "confidence_fail"), [{ claim: "No location matched", value: null, locator: "body" }]);
     },
   },
   {
@@ -133,6 +145,10 @@ export const contentChecks: CheckDefinition[] = [
     description: "FAIL when the latest copyright year is min_lag_years (default 2) or more years before retrieval. A lagging year is a weak staleness signal, so confidence is low.",
     evidenceRecorded: "The copyright line and its latest year.",
     params: { min_lag_years: { default: 2, min: 1, max: 10, integer: true, description: "FAIL when the copyright year lags retrieval by at least this many years" } },
+    confidences: {
+      confidence_fail: { default: 0.5, min: 0.1, max: 1, description: "Confidence of the FAIL result \"The copyright year is …\"" },
+      confidence_pass: { default: 0.6, min: 0.1, max: 1, description: "Confidence of the PASS result \"Copyright year … is current\"" },
+    },
     run({ doc, fetchedAt }, p) {
       const m = [...doc.text.matchAll(/(?:©|\(c\)|copyright)\s*(?:\d{4}\s*[-–]\s*)?(\d{4})/gi)];
       if (!m.length) return notApplicable("No copyright year on the page");
@@ -140,8 +156,8 @@ export const contentChecks: CheckDefinition[] = [
       const now = fetchedAt.getUTCFullYear();
       const ev = [{ claim: "Copyright line", value: String(year), excerpt: m[0]?.[0] ?? null, locator: "body text" }];
       if (year > now) return indeterminate(`Copyright year ${year} is after the retrieval date`, ev);
-      if (now - year >= (p.min_lag_years as number)) return fail(`The copyright year is ${year}`, 0.5, ev);
-      return pass(`Copyright year ${year} is current`, 0.6, ev);
+      if (now - year >= (p.min_lag_years as number)) return fail(`The copyright year is ${year}`, conf(p, "confidence_fail"), ev);
+      return pass(`Copyright year ${year} is current`, conf(p, "confidence_pass"), ev);
     },
   },
   {
@@ -153,13 +169,17 @@ export const contentChecks: CheckDefinition[] = [
     description: "Uses only machine-readable dates (<time datetime>, published/modified meta, JSON-LD). FAIL when the newest is over max_age_months (default 24) before retrieval.",
     evidenceRecorded: "The newest date found and where.",
     params: { max_age_months: { default: 24, min: 6, max: 120, integer: true, description: "FAIL when the newest machine-readable date is older than this many months" } },
+    confidences: {
+      confidence_fail: { default: 0.7, min: 0.1, max: 1, description: "Confidence of the FAIL result \"The most recent dated content is from …\"" },
+      confidence_pass: { default: 0.75, min: 0.1, max: 1, description: "Confidence of the PASS result \"Recently dated content present\"" },
+    },
     run({ doc, fetchedAt }, p) {
       const latest = latestDate(doc);
       if (!latest) return notApplicable("The page carries no machine-readable dates");
       const ev = [{ claim: "Most recent machine-readable date", value: latest.date.toISOString().slice(0, 10), excerpt: latest.source, locator: latest.locator }];
       const months = (fetchedAt.getTime() - latest.date.getTime()) / (30.44 * 24 * 3600 * 1000);
-      if (months > (p.max_age_months as number)) return fail(`The most recent dated content is from ${latest.date.toISOString().slice(0, 10)}`, 0.7, ev);
-      return pass("Recently dated content present", 0.75, ev);
+      if (months > (p.max_age_months as number)) return fail(`The most recent dated content is from ${latest.date.toISOString().slice(0, 10)}`, conf(p, "confidence_fail"), ev);
+      return pass("Recently dated content present", conf(p, "confidence_pass"), ev);
     },
   },
   {
@@ -171,12 +191,16 @@ export const contentChecks: CheckDefinition[] = [
     description: "Requests up to 3 linked PDFs (catalogues first) without downloading them; FAIL when a declared size exceeds max_pdf_bytes (default 10 MB).",
     evidenceRecorded: "Each PDF's URL, link text and declared Content-Length.",
     params: { max_pdf_bytes: { default: 10 * 1024 * 1024, min: 1024 * 1024, max: 500 * 1024 * 1024, integer: true, description: "FAIL when a linked PDF declares more bytes than this" } },
+    confidences: {
+      confidence_fail: { default: 0.9, min: 0.1, max: 1, description: "Confidence of the FAIL result \"A linked PDF is …\"" },
+      confidence_pass: { default: 0.85, min: 0.1, max: 1, description: "Confidence of the PASS result \"Linked PDFs are a manageable size\"" },
+    },
     run(ctx, params) {
       if (!ctx.pdfs.length) return notApplicable("No PDF links on the page");
       const ev = ctx.pdfs.map((p) => probeEvidence(p, "Linked PDF"));
       const heavy = ctx.pdfs.filter((p) => p.declaredLength !== null && p.declaredLength > (params.max_pdf_bytes as number));
-      if (heavy.length) return fail(`A linked PDF is ${mb(Math.max(...heavy.map((p) => p.declaredLength ?? 0)))}`, 0.9, ev);
-      if (ctx.pdfs.every((p) => p.declaredLength !== null)) return pass("Linked PDFs are a manageable size", 0.85, ev);
+      if (heavy.length) return fail(`A linked PDF is ${mb(Math.max(...heavy.map((p) => p.declaredLength ?? 0)))}`, conf(params, "confidence_fail"), ev);
+      if (ctx.pdfs.every((p) => p.declaredLength !== null)) return pass("Linked PDFs are a manageable size", conf(params, "confidence_pass"), ev);
       return indeterminate("Some linked PDFs did not declare a size or could not be requested", ev);
     },
   },
@@ -188,10 +212,14 @@ export const contentChecks: CheckDefinition[] = [
     version: V,
     description: "PASS for links to Facebook, Instagram, LinkedIn, X, TikTok or YouTube profiles (share buttons excluded).",
     evidenceRecorded: "The profile URLs found.",
-    run({ doc }) {
+    confidences: {
+      confidence_fail: { default: 0.85, min: 0.1, max: 1, description: "Confidence of the FAIL result \"No social profile links\"" },
+      confidence_pass: { default: 0.95, min: 0.1, max: 1, description: "Confidence of the PASS result \"… social profile link(s)\"" },
+    },
+    run({ doc }, cfg) {
       const links = socialLinks(doc);
-      if (!links.length) return fail("No social profile links", 0.85, [{ claim: "No social profile link", value: null, locator: "body" }]);
-      return pass(`${links.length} social profile link(s)`, 0.95, links.map((l) => ({ claim: "Social profile link", value: l.url.toString(), locator: pathOf(l.el) })));
+      if (!links.length) return fail("No social profile links", conf(cfg, "confidence_fail"), [{ claim: "No social profile link", value: null, locator: "body" }]);
+      return pass(`${links.length} social profile link(s)`, conf(cfg, "confidence_pass"), links.map((l) => ({ claim: "Social profile link", value: l.url.toString(), locator: pathOf(l.el) })));
     },
   },
   {
@@ -202,11 +230,15 @@ export const contentChecks: CheckDefinition[] = [
     version: V,
     description: "Requests up to 4 linked profiles. FAIL only on 404/410. Platforms that refuse automated access give INDETERMINATE.",
     evidenceRecorded: "Each profile request's outcome.",
-    run(ctx) {
+    confidences: {
+      confidence_fail: { default: 0.85, min: 0.1, max: 1, description: "Confidence of the FAIL result \"A linked social profile does not exist\"" },
+      confidence_pass: { default: 0.8, min: 0.1, max: 1, description: "Confidence of the PASS result \"Linked social profiles resolve\"" },
+    },
+    run(ctx, cfg) {
       if (!ctx.social.length) return notApplicable("No social profile links to check");
       const ev = ctx.social.map((p) => probeEvidence(p, "Social profile request"));
-      if (ctx.social.some((p) => p.httpStatus === 404 || p.httpStatus === 410)) return fail("A linked social profile does not exist", 0.85, ev);
-      if (ctx.social.some((p) => p.outcome === "OK")) return pass("Linked social profiles resolve", 0.8, ev);
+      if (ctx.social.some((p) => p.httpStatus === 404 || p.httpStatus === 410)) return fail("A linked social profile does not exist", conf(cfg, "confidence_fail"), ev);
+      if (ctx.social.some((p) => p.outcome === "OK")) return pass("Linked social profiles resolve", conf(cfg, "confidence_pass"), ev);
       return indeterminate("The platforms did not allow the profiles to be checked", ev);
     },
   },

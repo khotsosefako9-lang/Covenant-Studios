@@ -33,11 +33,21 @@ const CONTROLS = [
   ["wordpress.html", "https://reelcoast.co.za/"],
 ] as const;
 
+// Phase 10: the rugby union offers sponsorship packages for sale. That is the sports ICP's
+// defining criterion (commercial inventory to sell), detected as sponsorship_inventory, an
+// Intent-axis type. Every other control still produces no signal at all.
+const EXPECTED_SIGNALS: Record<string, string[]> = { "rugby.html": ["sponsorship_inventory"] };
+
 describe("control set (standing regression)", () => {
-  it.each(CONTROLS)("%s produces no signals at all, and none on the Intent axis", (file, url) => {
+  it.each(CONTROLS)("%s produces exactly its pinned signals, and no weakness signal", (file, url) => {
     const signals = detectAll(snapshotFor(ctxFor(fixture(`controls/${file}`), { url })));
-    expect(signals.filter((c) => INTENT_TYPES.has(c.typeKey))).toEqual([]);
-    expect(signals.map((c) => c.typeKey)).toEqual([]);
+    expect(signals.map((c) => c.typeKey)).toEqual(EXPECTED_SIGNALS[file] ?? []);
+    expect(signals.filter((c) => !INTENT_TYPES.has(c.typeKey))).toEqual([]);
+  });
+
+  it("rests the rugby union's sponsorship_inventory on the sponsorship offer, at the default strength", () => {
+    const [c] = detectAll(snapshotFor(ctxFor(fixture("controls/rugby.html"), { url: "https://ecrugby.co.za/" })));
+    expect(c).toMatchObject({ typeKey: "sponsorship_inventory", strength: 0.7, findingIds: ["commercial.sponsorship_offer"] });
   });
 });
 
@@ -130,8 +140,19 @@ describe("coverage and human-only types", () => {
     expect(seededTypes.filter((t) => t.humanOnly).map((t) => t.key).sort()).toEqual(HUMAN_ONLY.sort());
   });
 
-  it("has no automated Intent detector in M0: every intent signal comes from an operator", () => {
-    expect(DETECTORS.map((d) => d.typeKey).filter((k) => INTENT_TYPES.has(k))).toEqual([]);
+  it("has exactly one automated Intent detector: sponsorship_inventory, from an explicit sponsorship offer", () => {
+    expect(DETECTORS.map((d) => d.typeKey).filter((k) => INTENT_TYPES.has(k))).toEqual(["sponsorship_inventory"]);
+  });
+
+  it("does not raise sponsorship_inventory on a prose-only offer (confidence 0.7) at the default floor", () => {
+    const snap: AuditSnapshot = {
+      auditId: "a",
+      companyId: "c",
+      declaredLength: {},
+      findings: [{ id: "f", checkKey: "commercial.sponsorship_offer", status: "PRESENT", severity: null, confidence: 0.7, evidenceIds: ["e"] }],
+    };
+    expect(detectAll(snap)).toEqual([]);
+    expect(detectAll({ ...snap, findings: [{ ...snap.findings[0]!, confidence: 0.9 }] }).map((c) => c.typeKey)).toEqual(["sponsorship_inventory"]);
   });
 });
 

@@ -179,22 +179,57 @@ export const INVARIANTS: Invariant[] = [
   },
   {
     key: "opportunity_support_same_company",
-    description: "The signals and findings behind an opportunity belong to its company's identity cluster.",
+    description: "The signals and findings behind a current opportunity belong to its company's identity cluster (identity changes supersede opportunities).",
     violations: sql`select o.id::text, 'signal ' || sg.id || ' belongs to another company' as detail from opportunities o
       join opportunity_signals os on os.opportunity_id = o.id join signals sg on sg.id = os.signal_id
       join company_roots ro on ro.company_id = o.company_id join company_roots rs on rs.company_id = sg.company_id
-      where ro.root_id <> rs.root_id
+      where o.superseded_at is null and ro.root_id <> rs.root_id
       union all select o.id::text, 'finding ' || f.id || ' belongs to another company' from opportunities o
       join opportunity_findings ofn on ofn.opportunity_id = o.id join audit_findings f on f.id = ofn.audit_finding_id
       join audits a on a.id = f.audit_id join company_roots ro on ro.company_id = o.company_id join company_roots ra on ra.company_id = a.company_id
-      where ro.root_id <> ra.root_id`,
+      where o.superseded_at is null and ro.root_id <> ra.root_id`,
+  },
+  // --- Leads and the gate (Phase 10) ---
+  {
+    key: "one_open_lead_per_cluster",
+    description: "An identity cluster holds at most one open lead (the merge rule, src/leads/merge.ts).",
+    violations: sql`select r.root_id::text as id, count(*) || ' open leads' as detail from leads l
+      join company_roots r on r.company_id = l.company_id where l.status = 'open' group by r.root_id having count(*) > 1`,
   },
   {
-    key: "finding_opportunity_mappings_unused",
-    description:
-      "finding_opportunity_mappings has no active rows: findings reach opportunity types only through signals, so a row there would look live and do nothing.",
-    violations: sql`select check_key || '→' || opportunity_type_id as id, 'active direct finding mapping has no effect' as detail
-      from finding_opportunity_mappings where active`,
+    key: "lead_state_matches_last_transition",
+    description: "A lead's effective state is the state its latest recorded transition moved it to.",
+    violations: sql`select l.id::text, 'state ' || l.lead_state || ', last transition to ' || t.to_state as detail from leads l
+      join lateral (select to_state from lead_state_transitions x where x.lead_id = l.id order by x.occurred_at desc, x.created_at desc limit 1) t on true
+      where t.to_state <> l.lead_state`,
+  },
+  {
+    key: "lead_system_matches_last_evaluation",
+    description: "A lead's system state and system gate are those of its latest evaluation.",
+    violations: sql`select l.id::text, 'system ' || l.system_lead_state || '/' || l.system_gate_status || ', evaluation ' || e.system_state || '/' || e.gate_status as detail
+      from leads l join lead_evaluations e on e.id = l.last_evaluation_id
+      where e.system_state <> l.system_lead_state or e.gate_status <> l.system_gate_status`,
+  },
+  {
+    key: "system_qualified_has_opportunity",
+    description: "The system puts a lead in COMMERCIAL_OPPORTUNITY only while its business has a current opportunity.",
+    violations: sql`select l.id::text, 'COMMERCIAL_OPPORTUNITY with no current opportunity' as detail from leads l
+      where l.status = 'open' and l.system_lead_state = 'COMMERCIAL_OPPORTUNITY' and not exists (
+        select 1 from opportunities o join company_roots ro on ro.company_id = o.company_id
+        join company_roots rl on rl.company_id = l.company_id where ro.root_id = rl.root_id and o.superseded_at is null)`,
+  },
+  {
+    key: "system_disqualified_has_disqualification",
+    description: "The system puts a lead in DISQUALIFIED only on an active (not retracted) disqualification.",
+    violations: sql`select l.id::text, 'DISQUALIFIED with no active disqualification' as detail from leads l
+      where l.system_lead_state = 'DISQUALIFIED' and not exists (select 1 from lead_disqualifications d where d.lead_id = l.id and d.retracted_at is null)`,
+  },
+  {
+    key: "disqualifier_detection_check_valid",
+    description: "A disqualifier that fires from code names an existing commercial-offer check.",
+    violations: sql`select d.key as id, 'detection check ' || d.detection_check_key || ' is not a commercial check' as detail from disqualifiers d
+      left join audit_checks c on c.key = d.detection_check_key
+      where d.detection_check_key is not null and (c.key is null or c.category <> 'commercial')`,
   },
 ];
 

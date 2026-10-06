@@ -19,9 +19,9 @@ function check(key: string, html: string, over: Partial<AuditContext> & { url?: 
 }
 
 describe("registry", () => {
-  it("has 36 uniquely keyed checks (30 weakness, 6 capacity), each documented", () => {
-    expect(ALL_CHECKS).toHaveLength(36);
-    expect(new Set(ALL_CHECKS.map((c) => c.key)).size).toBe(36);
+  it("has 38 uniquely keyed checks (30 weakness, 6 capacity, 2 commercial), each documented", () => {
+    expect(ALL_CHECKS).toHaveLength(38);
+    expect(new Set(ALL_CHECKS.map((c) => c.key)).size).toBe(38);
     for (const c of ALL_CHECKS) {
       expect(c.description.length, c.key).toBeGreaterThan(20);
       expect(c.evidenceRecorded.length, c.key).toBeGreaterThan(10);

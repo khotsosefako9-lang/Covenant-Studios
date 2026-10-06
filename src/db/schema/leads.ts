@@ -5,6 +5,8 @@ import {
   check,
   foreignKey,
   index,
+  integer,
+  jsonb,
   numeric,
   pgTable,
   primaryKey,
@@ -23,11 +25,12 @@ import {
   judgementContext,
   leadState,
   leadStatus,
+  leadTransitionCause,
   scoreDimension,
   segmentFit,
   verdict,
 } from "./enums";
-import { companies } from "./identity";
+import { companies, companyMerges } from "./identity";
 import { evidence } from "./provenance";
 
 export const leads = pgTable(
@@ -40,17 +43,36 @@ export const leads = pgTable(
     icpSegmentId: uuid("icp_segment_id").references(() => icpSegments.id, { onDelete: "set null" }),
     status: leadStatus("status").notNull().default("open"),
     owner: text("owner"),
-    // The intent gate is stored on its own, never folded into the score.
+    // The effective state: the human override when there is one, else the system's.
     leadState: leadState("lead_state").notNull().default("PENDING_EVALUATION"),
+    // What the state machine computed (Phase 10), kept beside any human override.
+    systemLeadState: leadState("system_lead_state").notNull().default("PENDING_EVALUATION"),
+    stateOverride: leadState("state_override"),
+    stateOverrideBy: text("state_override_by"),
+    stateOverrideReason: text("state_override_reason"),
+    stateOverrideAt: tstz("state_override_at"),
+    // The intent gate is stored on its own, never folded into the score. These columns
+    // are the effective gate; system_gate_* is what the system computed.
     intentGateStatus: intentGateStatus("intent_gate_status").notNull().default("NOT_EVALUATED"),
     intentGateBasis: intentGateBasis("intent_gate_basis"),
     intentGateEvaluatedAt: tstz("intent_gate_evaluated_at"),
     intentGateOverrideBy: text("intent_gate_override_by"),
     intentGateOverrideReason: text("intent_gate_override_reason"),
+    systemGateStatus: intentGateStatus("system_gate_status").notNull().default("NOT_EVALUATED"),
+    systemGateBasis: intentGateBasis("system_gate_basis"),
+    lastEvaluationId: uuid("last_evaluation_id").references((): AnyPgColumn => leadEvaluations.id, { onDelete: "set null" }),
     // Channel suitability is not client suitability (benchmark category 15).
     segmentFit: segmentFit("segment_fit").notNull().default("unknown"),
     outreachChannelSuitability: channelSuitability("outreach_channel_suitability").notNull().default("unknown"),
     channelSuitabilityReason: text("channel_suitability_reason"),
+    channelSuitabilitySetBy: text("channel_suitability_set_by"),
+    channelSuitabilitySetAt: tstz("channel_suitability_set_at"),
+    // A closed lead keeps its history. 'merged': its business merged into another whose lead
+    // now carries the pursuit (merged_into_lead_id); an unmerge reopens it.
+    closedAt: tstz("closed_at"),
+    closedReason: text("closed_reason"),
+    mergedIntoLeadId: uuid("merged_into_lead_id").references((): AnyPgColumn => leads.id, { onDelete: "set null" }),
+    closedByMergeId: uuid("closed_by_merge_id").references(() => companyMerges.id, { onDelete: "restrict" }),
     currentScoreId: uuid("current_score_id").references((): AnyPgColumn => scores.id, { onDelete: "set null" }),
     ...timestamps(),
   },
@@ -75,6 +97,76 @@ export const leads = pgTable(
       "leads_channel_disallowed_has_reason",
       sql`${t.outreachChannelSuitability} <> 'cold_outreach_disallowed' or ${t.channelSuitabilityReason} is not null`,
     ),
+    // Phase 10: the effective state is the override when present, else the system's.
+    check("leads_effective_state", sql`${t.leadState} = coalesce(${t.stateOverride}, ${t.systemLeadState})`),
+    check(
+      "leads_state_override_complete",
+      sql`(${t.stateOverride} is null) = (${t.stateOverrideBy} is null) and (${t.stateOverride} is null) = (${t.stateOverrideReason} is null) and (${t.stateOverride} is null) = (${t.stateOverrideAt} is null)`,
+    ),
+    // Nothing reaches OUTREACH_READY automatically: it needs a human YES (Phase 13).
+    check("leads_system_never_outreach_ready", sql`${t.systemLeadState} <> 'OUTREACH_READY'`),
+    check("leads_system_qualified_requires_gate", sql`${t.systemLeadState} <> 'COMMERCIAL_OPPORTUNITY' or ${t.systemGateStatus} = 'PASSED'`),
+    check(
+      "leads_system_gate_basis",
+      sql`(${t.systemGateStatus} = 'PASSED') = (${t.systemGateBasis} is not null) and ${t.systemGateBasis} is distinct from 'human_override'`,
+    ),
+    check("leads_closed", sql`(${t.status} = 'closed') = (${t.closedAt} is not null) and (${t.closedAt} is null or ${t.closedReason} is not null)`),
+    check("leads_merge_closure", sql`(${t.mergedIntoLeadId} is null and ${t.closedByMergeId} is null) or ${t.closedReason} = 'merged'`),
+  ],
+);
+
+// One run of the state machine for a lead (Phase 10). Immutable: what the system decided,
+// on what, and why. leads.system_* always equals the latest row here.
+export const leadEvaluations = pgTable(
+  "lead_evaluations",
+  {
+    id: id(),
+    leadId: uuid("lead_id")
+      .notNull()
+      .references((): AnyPgColumn => leads.id, { onDelete: "cascade" }),
+    // The latest completed audit of the identity cluster the evaluation read, if any.
+    auditId: uuid("audit_id").references(() => audits.id, { onDelete: "restrict" }),
+    evaluatedAt: tstz("evaluated_at").notNull(),
+    systemState: leadState("system_state").notNull(),
+    gateStatus: intentGateStatus("gate_status").notNull(),
+    gateBasis: intentGateBasis("gate_basis"),
+    // Entry price of the best mapped opportunity, when the capacity profile evidences it.
+    commercialPotentialZar: integer("commercial_potential_zar"),
+    rule: text("rule").notNull(),
+    reasons: jsonb("reasons").notNull(),
+    // The inputs: intent signals, capacity markers, opportunities, disqualifications (ids and values).
+    detail: jsonb("detail").notNull(),
+    ...timestamps(),
+  },
+  (t) => [
+    index("lead_evaluations_lead").on(t.leadId, t.evaluatedAt),
+    check("lead_evaluations_never_outreach_ready", sql`${t.systemState} <> 'OUTREACH_READY'`),
+    check("lead_evaluations_gate_basis", sql`(${t.gateStatus} = 'PASSED') = (${t.gateBasis} is not null)`),
+  ],
+);
+
+// Every change of a lead's effective state, with its cause, actor and time. Immutable.
+export const leadStateTransitions = pgTable(
+  "lead_state_transitions",
+  {
+    id: id(),
+    leadId: uuid("lead_id")
+      .notNull()
+      .references((): AnyPgColumn => leads.id, { onDelete: "cascade" }),
+    fromState: leadState("from_state"),
+    toState: leadState("to_state").notNull(),
+    // The system's state at the time, kept beside the effective one.
+    systemState: leadState("system_state").notNull(),
+    cause: leadTransitionCause("cause").notNull(),
+    evaluationId: uuid("evaluation_id").references(() => leadEvaluations.id, { onDelete: "restrict" }),
+    actor: text("actor").notNull(),
+    detail: text("detail").notNull(),
+    occurredAt: tstz("occurred_at").notNull(),
+    ...timestamps(),
+  },
+  (t) => [
+    index("lead_state_transitions_lead").on(t.leadId, t.occurredAt),
+    check("lead_state_transitions_evaluation", sql`${t.cause} <> 'evaluation' or ${t.evaluationId} is not null`),
   ],
 );
 
@@ -93,9 +185,20 @@ export const leadDisqualifications = pgTable(
       .notNull()
       .references(() => evidence.id, { onDelete: "restrict" }),
     recordedBy: text("recorded_by").notNull(),
+    // Rule-fired disqualifications live and die with the audit that evidenced them; an
+    // operator lifts their own with a reason. Lifted rows are kept as history.
+    retractedAt: tstz("retracted_at"),
+    retractedBy: text("retracted_by"),
+    retractionReason: text("retraction_reason"),
     ...timestamps(),
   },
-  (t) => [uniqueIndex("lead_disqualifications_unique").on(t.leadId, t.disqualifierId, t.evidenceId)],
+  (t) => [
+    uniqueIndex("lead_disqualifications_unique").on(t.leadId, t.disqualifierId, t.evidenceId),
+    check(
+      "lead_disqualifications_retraction_complete",
+      sql`(${t.retractedAt} is null) = (${t.retractedBy} is null) and (${t.retractedAt} is null) = (${t.retractionReason} is null)`,
+    ),
+  ],
 );
 
 const unit = (name: string) => numeric(name, { precision: 5, scale: 4 });

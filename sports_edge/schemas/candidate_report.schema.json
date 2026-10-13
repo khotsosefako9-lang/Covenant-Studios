@@ -1,0 +1,265 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Sports Edge Candidate Report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "report_version",
+    "as_of_utc",
+    "timezone",
+    "mode",
+    "decision",
+    "source_status",
+    "reason_codes",
+    "candidates",
+    "accumulator"
+  ],
+  "properties": {
+    "report_version": {
+      "const": "1.0"
+    },
+    "as_of_utc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "timezone": {
+      "const": "Africa/Johannesburg"
+    },
+    "mode": {
+      "enum": [
+        "DATA_BLOCKED",
+        "RESEARCH_ONLY",
+        "PAPER_TRADING"
+      ]
+    },
+    "decision": {
+      "enum": [
+        "NO_BET",
+        "PROVISIONAL",
+        "ELIGIBLE_PAPER_ONLY"
+      ]
+    },
+    "source_status": {
+      "enum": [
+        "VERIFIED",
+        "PARTIAL",
+        "UNKNOWN",
+        "BLOCKED"
+      ]
+    },
+    "reason_codes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "candidate_id",
+          "fixture_id",
+          "kickoff_utc",
+          "market_type",
+          "market_label_raw",
+          "selection_raw",
+          "participant_id",
+          "threshold",
+          "odds_decimal",
+          "quote_observed_utc",
+          "quote_source",
+          "p_estimate",
+          "p_conservative",
+          "model_id",
+          "model_validated",
+          "evidence_id",
+          "starter_verified",
+          "settlement_verified",
+          "decision",
+          "reason_codes"
+        ],
+        "properties": {
+          "candidate_id": {
+            "type": "string"
+          },
+          "fixture_id": {
+            "type": "string"
+          },
+          "kickoff_utc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "market_type": {
+            "enum": [
+              "player_shots",
+              "player_sot",
+              "player_booking",
+              "team_corners",
+              "match_corners",
+              "outside_box_sot"
+            ]
+          },
+          "market_label_raw": {
+            "type": "string"
+          },
+          "selection_raw": {
+            "type": "string"
+          },
+          "participant_id": {
+            "type": "string"
+          },
+          "threshold": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "odds_decimal": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9]+(\\.[0-9]+)?$",
+            "description": "Exact decimal string, runtime must validate >1"
+          },
+          "quote_observed_utc": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "quote_source": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "p_estimate": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 1
+          },
+          "p_conservative": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 1
+          },
+          "model_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model_validated": {
+            "type": "boolean"
+          },
+          "evidence_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "starter_verified": {
+            "type": "boolean"
+          },
+          "settlement_verified": {
+            "type": "boolean"
+          },
+          "decision": {
+            "enum": [
+              "REJECT",
+              "PROVISIONAL",
+              "ELIGIBLE_PAPER_ONLY"
+            ]
+          },
+          "reason_codes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "accumulator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidate_ids",
+        "bookmaker_accepted_odds",
+        "joint_probability",
+        "joint_conservative_probability",
+        "dependency_method",
+        "stake_zar",
+        "decision",
+        "reason_codes"
+      ],
+      "properties": {
+        "candidate_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "bookmaker_accepted_odds": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9]+(\\.[0-9]+)?$",
+          "description": "Exact decimal string, runtime must validate >1"
+        },
+        "joint_probability": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "joint_conservative_probability": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "dependency_method": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "stake_zar": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{1,2})?$",
+          "description": "ZAR exact decimal string; never JSON float"
+        },
+        "decision": {
+          "enum": [
+            "NO_BET",
+            "PROVISIONAL",
+            "ELIGIBLE_PAPER_ONLY"
+          ]
+        },
+        "reason_codes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

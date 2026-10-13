@@ -1,0 +1,47 @@
+{
+  "report_kind": "CROSS_DAY_WINDOW_PROP_PREFLIGHT",
+  "window_id": "WEEKEND_2026-10-17_18",
+  "competition": "Domestic football (user-selected leagues)",
+  "report_created_at_utc": "2026-10-13T15:09:05.966694+00:00",
+  "evaluation_window": [
+    "2026-10-17",
+    "2026-10-18"
+  ],
+  "local_timezone": "Africa/Johannesburg",
+  "mode": "RESEARCH_ONLY",
+  "betting_decision": "NO BET",
+  "reason": "No validated, bookmaker-confirmed and joint-probability-assessed accumulator. Tool never authorises bets.",
+  "window_blockers": [
+    "NO_FIXTURES_ENTERED",
+    "NO_BETWAY_ZA_QUOTES",
+    "NO_CANDIDATE_TICKET",
+    "NO_VALIDATED_PROBABILITY_MODEL",
+    "JOINT_MODEL_NOT_VALIDATED",
+    "WINDOW_BALANCE_UNKNOWN"
+  ],
+  "fixture_count": 0,
+  "fixtures_not_officially_verified": [],
+  "earliest_window_kickoff_sast": null,
+  "next_upcoming_kickoff_sast": null,
+  "quotes_count": 0,
+  "tickets_count": 0,
+  "minimum_combined_odds": "10.00",
+  "maximum_combined_odds": null,
+  "window_exposure_limits_zar": null,
+  "days": [
+    {
+      "date": "2026-10-17",
+      "fixture_count": 0,
+      "earliest_kickoff_sast": null,
+      "fixtures": []
+    },
+    {
+      "date": "2026-10-18",
+      "fixture_count": 0,
+      "earliest_kickoff_sast": null,
+      "fixtures": []
+    }
+  ],
+  "entries": [],
+  "tickets": []
+}

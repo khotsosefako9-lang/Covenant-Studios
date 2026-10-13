@@ -1,0 +1,26 @@
+{
+  "report_version": "1.0",
+  "as_of_utc": "2026-10-12T17:00:00Z",
+  "timezone": "Africa/Johannesburg",
+  "mode": "DATA_BLOCKED",
+  "decision": "NO_BET",
+  "source_status": "UNKNOWN",
+  "reason_codes": [
+    "NO_CURRENT_PLAYER_EVENT_SOURCE_WITH_VERIFIED_USAGE_RIGHTS",
+    "MODEL_NOT_VALIDATED",
+    "NO_BETWAY_ZA_QUOTES"
+  ],
+  "candidates": [],
+  "accumulator": {
+    "candidate_ids": [],
+    "bookmaker_accepted_odds": null,
+    "joint_probability": null,
+    "joint_conservative_probability": null,
+    "dependency_method": null,
+    "stake_zar": "0.00",
+    "decision": "NO_BET",
+    "reason_codes": [
+      "NO_ELIGIBLE_LEGS"
+    ]
+  }
+}

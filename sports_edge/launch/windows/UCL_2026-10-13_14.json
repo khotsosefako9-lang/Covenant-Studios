@@ -1,0 +1,29 @@
+{
+  "window_id": "UCL_2026-10-13_14",
+  "kind": "ucl",
+  "competition": "UEFA Champions League",
+  "days_label": "Tuesday + Wednesday",
+  "local_timezone": "Africa/Johannesburg",
+  "dates": [
+    "2026-10-13",
+    "2026-10-14"
+  ],
+  "fixture_files": [
+    "fixtures_2026-10-13.csv",
+    "fixtures_2026-10-14.csv"
+  ],
+  "data_files": {
+    "quotes": "quotes_2026-10-13_14.csv",
+    "observations": "observations_2026-10-13_14.csv",
+    "tickets": "tickets_2026-10-13_14.csv"
+  },
+  "accumulator_policy": "ONE_COMBINED_CROSS_DAY_TICKET",
+  "minimum_accepted_decimal_odds": "10.00",
+  "maximum_decimal_odds": null,
+  "primary_ticket_max_count": 1,
+  "submission_must_precede_earliest_selected_kickoff": true,
+  "winner_predictions_default_enabled": false,
+  "window_start_available_balance_zar": null,
+  "mode": "RESEARCH_ONLY",
+  "rules": "All legs and their accepted combined price must be quoted and fixed before the earliest included kickoff; no adding Wednesday legs after a Tuesday ticket has begun. Future-day starters cannot be marked confirmed until actual team sheet."
+}

@@ -1,0 +1,13 @@
+/* Duly Qualified brand tokens */
+:root{
+  --dq-navy:#14213D;      /* primary */
+  --dq-navy-deep:#0B1328; /* graphic backgrounds */
+  --dq-red:#C8372D;       /* signature red: stamps, CTA, accents (use sparingly) */
+  --dq-red-soft:#FF7B6D;  /* red on navy, for legibility */
+  --dq-ivory:#F2F1EC;     /* paper, text on navy */
+  --dq-ink:#20283B;       /* text on ivory */
+  --dq-muted:#7A8390;
+  --dq-hairline:#D5D9DD;
+  --dq-font-display:"Hanken Grotesk", Arial, sans-serif;   /* 800/900 headlines, 500/700 body */
+  --dq-font-accent:"Newsreader", Georgia, serif;           /* italic 500/600, red, for 1-3 key words only */
+}

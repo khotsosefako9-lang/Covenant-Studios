@@ -1,0 +1,4 @@
+node_modules/
+remotion/out/
+remotion/public/raw/*.mp4
+raw-in/
